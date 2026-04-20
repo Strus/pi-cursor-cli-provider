@@ -506,7 +506,7 @@ function streamCursorCli(
         process.env["AGENT_PATH"] ??
         "agent";
 
-      const workspacePath = process.cwd();
+      const workspacePath = currentCwd;
       const prompt = serializeContext(context);
       const reasoningLevel = (options as { reasoning?: string })?.reasoning;
       const cliModelId = toCursorId(model.id, reasoningLevel);
@@ -710,6 +710,8 @@ function runAgentStatus(agentPath: string): Promise<string> {
 // Extension entry point
 // ---------------------------------------------------------------------------
 
+let currentCwd = process.cwd()
+
 /**
  * Build a ProviderModelConfig array from a list of CursorModelDef entries.
  * Uses canonical IDs where a mapping exists and omits variant-only entries.
@@ -749,6 +751,15 @@ export default async function (pi: ExtensionAPI) {
   } catch {
     modelDefs = STATIC_MODELS;
   }
+
+  // Track Pi's working directory so streamSimple uses the correct cwd
+  // (process.cwd() may differ from Pi's session cwd, e.g. after /cd).
+  pi.on("session_start", (_event, ctx) => {
+    currentCwd = ctx.cwd;
+  });
+  pi.on("turn_start", (_event, ctx) => {
+    currentCwd = ctx.cwd;
+  });
 
   pi.registerProvider("cursor", {
     baseUrl: "cli://cursor-agent",
