@@ -1,8 +1,4 @@
-<div align="center">
-  <img src="logo.png" alt="Pi Cursor Provider" width="400" />
-</div>
-
-# pi-cursor-provider
+# pi-cursor-cli-provider
 
 [![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -13,8 +9,6 @@
 A [Pi Coding Agent](https://github.com/badlogic/pi-mono) custom provider that routes model requests through the **Cursor Agent CLI**, enabling you to use any model available on your Cursor subscription — Claude (Opus, Sonnet), GPT, Gemini, Grok, and more — from inside Pi.
 
 No separate API keys are needed for the models themselves. Authentication is handled by the Cursor CLI using your existing Cursor account.
-
-![Pi with Cursor Agent — Auto model in Cursor IDE](screenshot.png)
 
 ---
 
@@ -61,16 +55,16 @@ No separate API keys are needed for the models themselves. Authentication is han
 
 ## Installation
 
-### Option A — Install from npm (recommended)
+### Option A — Install from git (recommended)
 
 ```bash
-pi install npm:@netandreus/pi-cursor-provider
+pi install git:github.com/Strus/pi-cursor-cli-provider
 ```
 
 Or for project-local install:
 
 ```bash
-pi install npm:@netandreus/pi-cursor-provider -l
+pi install git:github.com/Strus/pi-cursor-cli-provider -l
 ```
 
 ### Option B — Install from source
@@ -78,28 +72,28 @@ pi install npm:@netandreus/pi-cursor-provider -l
 From the repository root:
 
 ```bash
-git clone https://github.com/netandreus/pi-cursor-provider.git
-cd pi-cursor-provider
+git clone https://github.com/Strus/pi-cursor-cli-provider.git
+cd pi-cursor-provider-cli
 pi install .
 ```
 
 ### Option C — Try without installing
 
 ```bash
-pi -e npm:@netandreus/pi-cursor-provider
+pi -e git:github.com/Strus/pi-cursor-cli-provider
 ```
 
 ## Uninstall
 
-### Option A — Installed from npm (recommended)
+### Option A — Installed from git (recommended)
 ```bash
-pi remove npm:@netandreus/pi-cursor-provider
+pi remove git:github.com/Strus/pi-cursor-cli-provider
 ```
 
 ### Option B — Installed from source
 ```bash
 # You can find installed path right after running "pi"
-pi remove ~/sandbox/pi-cursor-provider
+pi remove ~/sandbox/pi-cursor-provider-cli
 ```
 ---
 
@@ -119,22 +113,11 @@ export CURSOR_API_KEY=your_cursor_api_key
 
 If `CURSOR_API_KEY` is set it is forwarded to every `agent` subprocess via `--api-key` automatically.
 
-### Auth commands inside Pi
-
-After loading the extension you can manage auth without leaving Pi. These commands appear in the command palette (e.g. when you type `/cur`):
-
-| Command | Description |
-|---|---|
-| `/cursor-login` | Log in to Cursor (runs `agent login`) |
-| `/cursor-status` | Show Cursor authentication status (runs `agent status`) |
-| `/cursor-logout` | Log out of Cursor (runs `agent logout`) |
 
 ### Verify auth
 
 ```bash
 agent status
-# or inside Pi:
-# /cursor-status
 ```
 
 Expected output when authenticated:
@@ -158,14 +141,14 @@ After loading the extension, select a Cursor model with the `/model` command:
 You can also specify the model on the command line:
 
 ```bash
-pi -e npm:@netandreus/pi-cursor-provider --provider cursor --model auto
+pi -e git:github.com/Strus/pi-cursor-cli-provider --provider cursor --model auto
 ```
 
 Or pipe a prompt non-interactively:
 
 ```bash
 echo "Explain the main function in this file" | \
-  pi -e npm:@netandreus/pi-cursor-provider --provider cursor --model sonnet-4.6
+  pi -e git:github.com/Strus/pi-cursor-cli-provider --provider cursor --model sonnet-4.6
 ```
 
 ---
@@ -182,33 +165,48 @@ To see the models currently available to your account:
 agent models
 ```
 
-Models whose id contains `-thinking`, `-high`, `-xhigh`, or `-max-high` are marked as reasoning models in Pi. All other metadata (contextWindow, maxTokens) is derived from the static lookup table or set to safe defaults (200k context / 32k max tokens) for models not in the table.
+Models whose id contains `-thinking`, `-high`, `-xhigh`, `-medium`, `-low`, or `-max-high` are marked as reasoning models in Pi. All other metadata (contextWindow, maxTokens) is derived from the static lookup table or set to safe defaults (200k context / 32k max tokens) for models not in the table.
 
 When you use a **canonical ID** (e.g. `claude-sonnet-4-5`), the provider can send the thinking variant to the CLI when Pi’s reasoning level is enabled.
 
 ### Model reference table
 
-Subset of models supported by the provider. Use the **Canonical ID** with `/model cursor/<id>`. The full list is discoverable via `agent models`.
+Subset of models supported by the provider (see `src/models.ts` for the full static list and `MODEL_MAP`). Use the **Canonical ID** with `/model cursor/<id>`. Short CLI-style aliases (e.g. `sonnet-4.6`) are accepted when they appear as keys in `MODEL_MAP`. The full list for your account is discoverable via `agent models`.
 
-| Canonical ID | CLI model ID | Name | Reasoning |
+| Canonical ID | CLI model ID (resolved) | Name (typical) | Reasoning |
 |---|---|---|---|
 | `auto` | `auto` | Auto | — |
-| `claude-sonnet-4-5` | `sonnet-4.5`, `sonnet-4.5-thinking` | Claude 4.5 Sonnet | yes (thinking variant) |
-| `claude-sonnet-4-6` | `sonnet-4.6`, `sonnet-4.6-thinking` | Claude 4.6 Sonnet | yes (thinking variant) |
-| `claude-opus-4-5` | `opus-4.5`, `opus-4.5-thinking` | Claude 4.5 Opus | yes (thinking variant) |
-| `claude-opus-4-6` | `opus-4.6`, `opus-4.6-thinking` | Claude 4.6 Opus | yes (thinking variant) |
-| `gpt-5.2` | `gpt-5.2`, `gpt-5.2-high` | GPT-5.2 | yes (high variant) |
-| `gpt-5.2-codex` | `gpt-5.2-codex`, `-low`, `-high`, `-xhigh` | GPT-5.2 Codex | yes (level variants) |
-| `gpt-5.2-codex-fast` | `gpt-5.2-codex-fast`, `-low-fast`, … | GPT-5.2 Codex Fast | yes (level variants) |
-| `gpt-5.3-codex` | `gpt-5.3-codex`, `-low`, `-high`, `-xhigh` | GPT-5.3 Codex | yes (level variants) |
-| `gpt-5.3-codex-fast` | `gpt-5.3-codex-fast`, … | GPT-5.3 Codex Fast | yes (level variants) |
-| `gpt-5.1` | `gpt-5.1-high` | GPT-5.1 High | yes |
-| `gpt-5.1-codex-max` | `gpt-5.1-codex-max`, `-max-high` | GPT-5.1 Codex Max | yes |
-| `gemini-3-pro-preview` | `gemini-3-pro` | Gemini 3 Pro | — |
+| `claude-sonnet-4-5` / `sonnet-4.5` | `claude-4.5-sonnet`, `claude-4.5-sonnet-thinking` | Sonnet 4.5 (1M) | yes (thinking when enabled) |
+| `claude-sonnet-4-6` / `sonnet-4.6` | `claude-4.6-sonnet-medium`, `claude-4.6-sonnet-medium-thinking` | Sonnet 4.6 (1M) | yes (thinking when enabled) |
+| `claude-sonnet-4` | `claude-4-sonnet`, `claude-4-sonnet-thinking` | Sonnet 4 | yes (thinking when enabled) |
+| `claude-sonnet-4-1m` | `claude-4-sonnet-1m`, `claude-4-sonnet-1m-thinking` | Sonnet 4 (1M) | yes (thinking when enabled) |
+| `claude-opus-4-5` / `opus-4.5` | `claude-4.5-opus-high`, `claude-4.5-opus-high-thinking` | Opus 4.5 | yes (thinking when enabled) |
+| `claude-opus-4-6` / `opus-4.6` | `claude-4.6-opus-high`, … `claude-4.6-opus-max-thinking` | Opus 4.6 (1M) | yes (tiered / max) |
+| `claude-opus-4-6-fast` | `claude-4.6-opus-high-thinking-fast`, … | Opus 4.6 (1M) Fast | yes |
+| `claude-opus-4-7` | `claude-opus-4-7-xhigh`, … `claude-opus-4-7-thinking-*`, `…-max` | Opus 4.7 (1M) | yes (thinking tiers) |
+| `gpt-5.4` | `gpt-5.4-low`, `gpt-5.4-medium`, `gpt-5.4-high`, `gpt-5.4-xhigh` | GPT-5.4 (1M) | yes |
+| `gpt-5.4-fast` | `gpt-5.4-medium-fast`, `gpt-5.4-high-fast`, `gpt-5.4-xhigh-fast` | GPT-5.4 Fast (1M) | yes |
+| `gpt-5.4-mini` | `gpt-5.4-mini-low`, … `gpt-5.4-mini-xhigh` | GPT-5.4 Mini | yes (none tier: `gpt-5.4-mini-none`) |
+| `gpt-5.4-nano` | `gpt-5.4-nano-low`, … `gpt-5.4-nano-xhigh` | GPT-5.4 Nano | yes (none tier: `gpt-5.4-nano-none`) |
+| `gpt-5.3-codex` | `gpt-5.3-codex`, `-low`, `-high`, `-xhigh` | Codex 5.3 | yes |
+| `gpt-5.3-codex-fast` | `gpt-5.3-codex-fast`, `-low-fast`, … | Codex 5.3 Fast | yes |
+| `gpt-5.3-codex-spark-preview` | `gpt-5.3-codex-spark-preview`, `-low`, `-high`, `-xhigh` | Codex 5.3 Spark (preview) | yes |
+| `gpt-5.2` | `gpt-5.2`, `gpt-5.2-low`, `gpt-5.2-high`, `gpt-5.2-xhigh` | GPT-5.2 | yes |
+| `gpt-5.2-fast` | `gpt-5.2-fast`, `gpt-5.2-low-fast`, … | GPT-5.2 Fast | yes |
+| `gpt-5.2-codex` | `gpt-5.2-codex`, `-low`, `-high`, `-xhigh` | Codex 5.2 | yes |
+| `gpt-5.2-codex-fast` | `gpt-5.2-codex-fast`, `-low-fast`, … | Codex 5.2 Fast | yes |
+| `gpt-5.1` | `gpt-5.1`, `gpt-5.1-low`, `gpt-5.1-high` | GPT-5.1 | yes |
+| `gpt-5.1-codex-max` | `gpt-5.1-codex-max-medium`, … `-xhigh` | Codex 5.1 Max | yes |
+| `gpt-5.1-codex-max-fast` | `gpt-5.1-codex-max-medium-fast`, … | Codex 5.1 Max Fast | yes |
+| `gpt-5.1-codex-mini` | `gpt-5.1-codex-mini`, `-low`, `-high` | Codex 5.1 Mini | yes |
+| `gpt-5-mini` | `gpt-5-mini` | GPT-5 Mini | — |
+| `gemini-3-pro` / `gemini-3-pro-preview` / `gemini-3.1-pro-preview` | `gemini-3.1-pro` | Gemini 3.1 Pro | — |
 | `gemini-3-flash-preview` | `gemini-3-flash` | Gemini 3 Flash | — |
-| `grok-code-fast-1` | `grok` | Grok | — |
+| `grok` / `grok-code-fast-1` / `grok-4-20` | `grok-4-20`, `grok-4-20-thinking` | Grok 4.20 | yes (thinking when enabled) |
+| `composer-2` | `composer-2` | Composer 2 | — |
+| `composer-2-fast` | `composer-2-fast` | Composer 2 Fast | — |
 | `composer-1.5` | `composer-1.5` | Composer 1.5 | — |
-| `composer-1` | `composer-1` | Composer 1 | — |
+| `kimi-k2.5` | `kimi-k2.5` | Kimi K2.5 | — |
 
 ---
 
@@ -224,22 +222,36 @@ Example:
 
 ```bash
 export CURSOR_AGENT_PATH=$HOME/.local/bin/agent
-pi -e npm:@netandreus/pi-cursor-provider --provider cursor --model auto
+pi -e git:github.com/Strus/pi-cursor-cli-provider --provider cursor --model auto
 ```
 
 ---
 
 ## How it works
 
-Each Pi turn spawns a Cursor Agent CLI subprocess:
+Each Pi turn spawns a Cursor Agent CLI subprocess. The first turn sends the
+full Pi transcript; later turns resume the saved Cursor chat session and send
+only the newest user prompt:
 
 ```
-agent --print --output-format stream-json --model <id> --trust --workspace <cwd> "<prompt>"
+agent --print --output-format stream-json --model <id> --trust --workspace <cwd> "<full prompt>"
+# later turns
+agent --print --output-format stream-json --model <id> --resume <session-id> --trust --workspace <cwd> "<latest user prompt>"
 ```
 
-The extension serialises the Pi conversation (system prompt + message history) into a single text prompt that is passed to the CLI. The CLI's NDJSON stdout is read line-by-line; `type: "assistant"` events are mapped to Pi stream events (`text_start`, `text_delta`, `text_end`, `done`).
+The extension serialises the Pi conversation (system prompt + message history)
+into a single text prompt for the first CLI call. When the Cursor CLI emits a
+`session_id`, the provider stores it in the Pi session. Subsequent turns pass
+that id back with `--resume`, so Cursor keeps the conversation state without Pi
+having to resend the whole history every time.
 
-- **Multi-turn context**: The full message history is serialised as a prefixed transcript (`[User] / [Assistant] / [Tool result]`) and sent as a single prompt. Cursor manages its own internal conversation from that point.
+The CLI's NDJSON stdout is read line-by-line; `type: "assistant"` events are
+mapped to Pi stream events (`text_start`, `text_delta`, `text_end`, `done`).
+
+- **Multi-turn context**: The first turn serialises the full message history as
+  a prefixed transcript (`[User] / [Assistant] / [Tool result]`). Once a
+  Cursor session id has been captured, later turns resume that session and send
+  only the latest user message.
 - **Token usage**: Cursor CLI does not expose token counts; usage is reported as 0.
 - **Cost tracking**: Models are registered with `cost: 0` since billing goes through your Cursor subscription.
 
