@@ -31,6 +31,12 @@ import {
 	toCursorId,
 	toProviderModels,
 } from "./models.js";
+import {
+	type CursorToolCallPayload,
+	renderCompletedToolCall,
+	renderStartedToolCall,
+	setRendererTheme,
+} from "./renderer.js";
 
 // ---------------------------------------------------------------------------
 // Prompt serialisation
@@ -101,20 +107,6 @@ interface CursorAssistantEvent {
 	session_id: string;
 }
 
-/**
- * A single Cursor CLI tool call (the value keyed by tool name).
- * The key is the tool name in camelCase (e.g. "shellToolCall", "readToolCall").
- * args are present on both started and completed; result only on completed.
- */
-interface CursorToolCallPayload {
-	args: Record<string, unknown>;
-	result?: {
-		success?: Record<string, unknown>;
-		rejected?: { reason?: string };
-		error?: { message?: string };
-	};
-}
-
 interface CursorToolCallEvent {
 	type: "tool_call";
 	subtype: "started" | "completed";
@@ -142,31 +134,6 @@ function parseLine(line: string): CursorStreamEvent | null {
 	} catch {
 		return null;
 	}
-}
-
-// ---------------------------------------------------------------------------
-// Tool name mapping — CLI camelCase key → Pi display name
-// ---------------------------------------------------------------------------
-
-const TOOL_NAME_MAP: Record<string, string> = {
-	shellToolCall: "Shell",
-	readToolCall: "Read",
-	editToolCall: "Edit",
-	writeToolCall: "Write",
-	deleteToolCall: "Delete",
-	grepToolCall: "Grep",
-	globToolCall: "Glob",
-	lsToolCall: "Ls",
-	todoToolCall: "Todo",
-	updateTodosToolCall: "UpdateTodos",
-	findToolCall: "Find",
-	webFetchToolCall: "WebFetch",
-	webSearchToolCall: "WebSearch",
-};
-
-/** Convert a CLI tool event key (e.g. "shellToolCall") to a Pi tool name. */
-function toPiToolName(cliKey: string): string {
-	return TOOL_NAME_MAP[cliKey] ?? cliKey.replace(/ToolCall$/, "");
 }
 
 // ---------------------------------------------------------------------------
@@ -253,6 +220,30 @@ function streamCursorCli(
 
 			let textBlockOpen = false;
 			let accumulatedText = "";
+			const appendTextDelta = (delta: string) => {
+				if (!delta) return;
+				if (firstTokenTime === undefined) firstTokenTime = Date.now();
+				if (!textBlockOpen) {
+					output.content.push({ type: "text", text: "" });
+					const idx = output.content.length - 1;
+					stream.push({
+						type: "text_start",
+						contentIndex: idx,
+						partial: output,
+					});
+					textBlockOpen = true;
+				}
+				const idx = output.content.length - 1;
+				const textBlock = output.content[idx] as TextContent;
+				textBlock.text += delta;
+				accumulatedText += delta;
+				stream.push({
+					type: "text_delta",
+					contentIndex: idx,
+					delta,
+					partial: output,
+				});
+			};
 
 			const stdout = child.stdout;
 			if (!stdout) {
@@ -269,70 +260,26 @@ function streamCursorCli(
 					for (const block of ae.message.content) {
 						if (block.type !== "text") continue;
 						if (!block.text.trim()) continue;
-
-						if (firstTokenTime === undefined) firstTokenTime = Date.now();
-						if (!textBlockOpen) {
-							output.content.push({ type: "text", text: "" });
-							const idx = output.content.length - 1;
-							stream.push({
-								type: "text_start",
-								contentIndex: idx,
-								partial: output,
-							});
-							textBlockOpen = true;
-						}
-
-						const idx = output.content.length - 1;
-						const textBlock = output.content[idx] as TextContent;
-						textBlock.text += block.text;
-						accumulatedText += block.text;
-						stream.push({
-							type: "text_delta",
-							contentIndex: idx,
-							delta: block.text,
-							partial: output,
-						});
+						appendTextDelta(block.text);
 					}
 					return;
 				}
 
-				// Tool calls are rendered as informational text, not as Pi toolcall_*
-				// events, to prevent Pi's agentic loop from re-invoking streamSimple.
+				// Pi supports structured toolcall_* events, but Cursor CLI's tool_call
+				// stream is observational: by the time we receive it, Cursor has
+				// already executed the tool. Emitting Pi tool calls here would cause
+				// Pi to execute the same tool again and continue another agent turn.
 				if (event.type === "tool_call") {
 					const tce = event as CursorToolCallEvent;
 					const cliKey = Object.keys(tce.tool_call)[0];
 					if (!cliKey) return;
-					const toolName = toPiToolName(cliKey);
+					const payload = tce.tool_call[cliKey];
+					if (!payload) return;
 
 					if (tce.subtype === "started") {
-						const payload = tce.tool_call[cliKey];
-						const argsSnippet = JSON.stringify(payload.args ?? {});
-						const brief =
-							argsSnippet.length > 120
-								? `${argsSnippet.slice(0, 120)}...`
-								: argsSnippet;
-						const marker = `\n[${toolName}] ${brief}\n`;
-
-						if (!textBlockOpen) {
-							output.content.push({ type: "text", text: "" });
-							const idx = output.content.length - 1;
-							stream.push({
-								type: "text_start",
-								contentIndex: idx,
-								partial: output,
-							});
-							textBlockOpen = true;
-						}
-						const idx = output.content.length - 1;
-						const textBlock = output.content[idx] as TextContent;
-						textBlock.text += marker;
-						accumulatedText += marker;
-						stream.push({
-							type: "text_delta",
-							contentIndex: idx,
-							delta: marker,
-							partial: output,
-						});
+						appendTextDelta(renderStartedToolCall(cliKey, payload));
+					} else if (tce.subtype === "completed") {
+						appendTextDelta(renderCompletedToolCall(cliKey, payload));
 					}
 				}
 			});
@@ -459,6 +406,10 @@ function runAgentStatus(agentPath: string): Promise<string> {
 export default async function (pi: ExtensionAPI) {
 	const agentPath =
 		process.env.CURSOR_AGENT_PATH ?? process.env.AGENT_PATH ?? "agent";
+
+	pi.on("session_start", async (_event, ctx) => {
+		setRendererTheme(ctx.ui.theme);
+	});
 
 	// Attempt dynamic model discovery; fall back to static list on any failure.
 	let modelDefs = STATIC_MODELS;
