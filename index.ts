@@ -38,6 +38,9 @@ interface CursorModelDef {
   maxTokens: number;
 }
 
+/** Explicit `-thinking` variants are always reasoning-capable. */
+const THINKING_VARIANT_RE = /-thinking(?:-|$)/;
+
 /**
  * Static fallback list. Used when `agent models` fails or times out, and as
  * an attribute lookup table for models discovered dynamically.
@@ -54,71 +57,71 @@ const STATIC_MODELS: CursorModelDef[] = [
   { id: "composer-1.5", name: "Composer 1.5", reasoning: false, contextWindow: 200000, maxTokens: 32768 },
 
   // GPT-5.4
-  { id: "gpt-5.4-low", name: "GPT-5.4 1M Low", reasoning: false, contextWindow: 1000000, maxTokens: 32768 },
-  { id: "gpt-5.4-medium", name: "GPT-5.4 1M", reasoning: false, contextWindow: 1000000, maxTokens: 32768 },
+  { id: "gpt-5.4-low", name: "GPT-5.4 1M Low", reasoning: true, contextWindow: 1000000, maxTokens: 32768 },
+  { id: "gpt-5.4-medium", name: "GPT-5.4 1M", reasoning: true, contextWindow: 1000000, maxTokens: 32768 },
   { id: "gpt-5.4-high", name: "GPT-5.4 1M High", reasoning: true, contextWindow: 1000000, maxTokens: 32768 },
   { id: "gpt-5.4-xhigh", name: "GPT-5.4 1M Extra High", reasoning: true, contextWindow: 1000000, maxTokens: 32768 },
-  { id: "gpt-5.4-medium-fast", name: "GPT-5.4 Fast", reasoning: false, contextWindow: 1000000, maxTokens: 32768 },
+  { id: "gpt-5.4-medium-fast", name: "GPT-5.4 Fast", reasoning: true, contextWindow: 1000000, maxTokens: 32768 },
   { id: "gpt-5.4-high-fast", name: "GPT-5.4 High Fast", reasoning: true, contextWindow: 1000000, maxTokens: 32768 },
   { id: "gpt-5.4-xhigh-fast", name: "GPT-5.4 Extra High Fast", reasoning: true, contextWindow: 1000000, maxTokens: 32768 },
   { id: "gpt-5.4-mini-none", name: "GPT-5.4 Mini None", reasoning: false, contextWindow: 200000, maxTokens: 32768 },
-  { id: "gpt-5.4-mini-low", name: "GPT-5.4 Mini Low", reasoning: false, contextWindow: 200000, maxTokens: 32768 },
-  { id: "gpt-5.4-mini-medium", name: "GPT-5.4 Mini", reasoning: false, contextWindow: 200000, maxTokens: 32768 },
+  { id: "gpt-5.4-mini-low", name: "GPT-5.4 Mini Low", reasoning: true, contextWindow: 200000, maxTokens: 32768 },
+  { id: "gpt-5.4-mini-medium", name: "GPT-5.4 Mini", reasoning: true, contextWindow: 200000, maxTokens: 32768 },
   { id: "gpt-5.4-mini-high", name: "GPT-5.4 Mini High", reasoning: true, contextWindow: 200000, maxTokens: 32768 },
   { id: "gpt-5.4-mini-xhigh", name: "GPT-5.4 Mini Extra High", reasoning: true, contextWindow: 200000, maxTokens: 32768 },
   { id: "gpt-5.4-nano-none", name: "GPT-5.4 Nano None", reasoning: false, contextWindow: 200000, maxTokens: 32768 },
-  { id: "gpt-5.4-nano-low", name: "GPT-5.4 Nano Low", reasoning: false, contextWindow: 200000, maxTokens: 32768 },
-  { id: "gpt-5.4-nano-medium", name: "GPT-5.4 Nano", reasoning: false, contextWindow: 200000, maxTokens: 32768 },
+  { id: "gpt-5.4-nano-low", name: "GPT-5.4 Nano Low", reasoning: true, contextWindow: 200000, maxTokens: 32768 },
+  { id: "gpt-5.4-nano-medium", name: "GPT-5.4 Nano", reasoning: true, contextWindow: 200000, maxTokens: 32768 },
   { id: "gpt-5.4-nano-high", name: "GPT-5.4 Nano High", reasoning: true, contextWindow: 200000, maxTokens: 32768 },
   { id: "gpt-5.4-nano-xhigh", name: "GPT-5.4 Nano Extra High", reasoning: true, contextWindow: 200000, maxTokens: 32768 },
   { id: "gpt-5-mini", name: "GPT-5 Mini", reasoning: false, contextWindow: 200000, maxTokens: 32768 },
 
   // GPT-5.3
-  { id: "gpt-5.3-codex-low", name: "Codex 5.3 Low", reasoning: false, contextWindow: 200000, maxTokens: 32768 },
-  { id: "gpt-5.3-codex", name: "Codex 5.3", reasoning: false, contextWindow: 200000, maxTokens: 32768 },
+  { id: "gpt-5.3-codex-low", name: "Codex 5.3 Low", reasoning: true, contextWindow: 200000, maxTokens: 32768 },
+  { id: "gpt-5.3-codex", name: "Codex 5.3", reasoning: true, contextWindow: 200000, maxTokens: 32768 },
   { id: "gpt-5.3-codex-high", name: "Codex 5.3 High", reasoning: true, contextWindow: 200000, maxTokens: 32768 },
   { id: "gpt-5.3-codex-xhigh", name: "Codex 5.3 Extra High", reasoning: true, contextWindow: 200000, maxTokens: 32768 },
-  { id: "gpt-5.3-codex-low-fast", name: "Codex 5.3 Low Fast", reasoning: false, contextWindow: 200000, maxTokens: 32768 },
-  { id: "gpt-5.3-codex-fast", name: "Codex 5.3 Fast", reasoning: false, contextWindow: 200000, maxTokens: 32768 },
+  { id: "gpt-5.3-codex-low-fast", name: "Codex 5.3 Low Fast", reasoning: true, contextWindow: 200000, maxTokens: 32768 },
+  { id: "gpt-5.3-codex-fast", name: "Codex 5.3 Fast", reasoning: true, contextWindow: 200000, maxTokens: 32768 },
   { id: "gpt-5.3-codex-high-fast", name: "Codex 5.3 High Fast", reasoning: true, contextWindow: 200000, maxTokens: 32768 },
   { id: "gpt-5.3-codex-xhigh-fast", name: "Codex 5.3 Extra High Fast", reasoning: true, contextWindow: 200000, maxTokens: 32768 },
-  { id: "gpt-5.3-codex-spark-preview-low", name: "Codex 5.3 Spark Low", reasoning: false, contextWindow: 200000, maxTokens: 32768 },
-  { id: "gpt-5.3-codex-spark-preview", name: "Codex 5.3 Spark", reasoning: false, contextWindow: 200000, maxTokens: 32768 },
+  { id: "gpt-5.3-codex-spark-preview-low", name: "Codex 5.3 Spark Low", reasoning: true, contextWindow: 200000, maxTokens: 32768 },
+  { id: "gpt-5.3-codex-spark-preview", name: "Codex 5.3 Spark", reasoning: true, contextWindow: 200000, maxTokens: 32768 },
   { id: "gpt-5.3-codex-spark-preview-high", name: "Codex 5.3 Spark High", reasoning: true, contextWindow: 200000, maxTokens: 32768 },
   { id: "gpt-5.3-codex-spark-preview-xhigh", name: "Codex 5.3 Spark Extra High", reasoning: true, contextWindow: 200000, maxTokens: 32768 },
 
   // GPT-5.2
-  { id: "gpt-5.2-low", name: "GPT-5.2 Low", reasoning: false, contextWindow: 200000, maxTokens: 32768 },
-  { id: "gpt-5.2", name: "GPT-5.2", reasoning: false, contextWindow: 200000, maxTokens: 32768 },
+  { id: "gpt-5.2-low", name: "GPT-5.2 Low", reasoning: true, contextWindow: 200000, maxTokens: 32768 },
+  { id: "gpt-5.2", name: "GPT-5.2", reasoning: true, contextWindow: 200000, maxTokens: 32768 },
   { id: "gpt-5.2-high", name: "GPT-5.2 High", reasoning: true, contextWindow: 200000, maxTokens: 32768 },
   { id: "gpt-5.2-xhigh", name: "GPT-5.2 Extra High", reasoning: true, contextWindow: 200000, maxTokens: 32768 },
-  { id: "gpt-5.2-low-fast", name: "GPT-5.2 Low Fast", reasoning: false, contextWindow: 200000, maxTokens: 32768 },
-  { id: "gpt-5.2-fast", name: "GPT-5.2 Fast", reasoning: false, contextWindow: 200000, maxTokens: 32768 },
+  { id: "gpt-5.2-low-fast", name: "GPT-5.2 Low Fast", reasoning: true, contextWindow: 200000, maxTokens: 32768 },
+  { id: "gpt-5.2-fast", name: "GPT-5.2 Fast", reasoning: true, contextWindow: 200000, maxTokens: 32768 },
   { id: "gpt-5.2-high-fast", name: "GPT-5.2 High Fast", reasoning: true, contextWindow: 200000, maxTokens: 32768 },
   { id: "gpt-5.2-xhigh-fast", name: "GPT-5.2 Extra High Fast", reasoning: true, contextWindow: 200000, maxTokens: 32768 },
-  { id: "gpt-5.2-codex-low", name: "Codex 5.2 Low", reasoning: false, contextWindow: 200000, maxTokens: 32768 },
-  { id: "gpt-5.2-codex", name: "Codex 5.2", reasoning: false, contextWindow: 200000, maxTokens: 32768 },
+  { id: "gpt-5.2-codex-low", name: "Codex 5.2 Low", reasoning: true, contextWindow: 200000, maxTokens: 32768 },
+  { id: "gpt-5.2-codex", name: "Codex 5.2", reasoning: true, contextWindow: 200000, maxTokens: 32768 },
   { id: "gpt-5.2-codex-high", name: "Codex 5.2 High", reasoning: true, contextWindow: 200000, maxTokens: 32768 },
   { id: "gpt-5.2-codex-xhigh", name: "Codex 5.2 Extra High", reasoning: true, contextWindow: 200000, maxTokens: 32768 },
-  { id: "gpt-5.2-codex-low-fast", name: "Codex 5.2 Low Fast", reasoning: false, contextWindow: 200000, maxTokens: 32768 },
-  { id: "gpt-5.2-codex-fast", name: "Codex 5.2 Fast", reasoning: false, contextWindow: 200000, maxTokens: 32768 },
+  { id: "gpt-5.2-codex-low-fast", name: "Codex 5.2 Low Fast", reasoning: true, contextWindow: 200000, maxTokens: 32768 },
+  { id: "gpt-5.2-codex-fast", name: "Codex 5.2 Fast", reasoning: true, contextWindow: 200000, maxTokens: 32768 },
   { id: "gpt-5.2-codex-high-fast", name: "Codex 5.2 High Fast", reasoning: true, contextWindow: 200000, maxTokens: 32768 },
   { id: "gpt-5.2-codex-xhigh-fast", name: "Codex 5.2 Extra High Fast", reasoning: true, contextWindow: 200000, maxTokens: 32768 },
 
   // GPT-5.1
-  { id: "gpt-5.1-low", name: "GPT-5.1 Low", reasoning: false, contextWindow: 200000, maxTokens: 32768 },
-  { id: "gpt-5.1", name: "GPT-5.1", reasoning: false, contextWindow: 200000, maxTokens: 32768 },
+  { id: "gpt-5.1-low", name: "GPT-5.1 Low", reasoning: true, contextWindow: 200000, maxTokens: 32768 },
+  { id: "gpt-5.1", name: "GPT-5.1", reasoning: true, contextWindow: 200000, maxTokens: 32768 },
   { id: "gpt-5.1-high", name: "GPT-5.1 High", reasoning: true, contextWindow: 200000, maxTokens: 32768 },
-  { id: "gpt-5.1-codex-max-low", name: "Codex 5.1 Max Low", reasoning: false, contextWindow: 200000, maxTokens: 32768 },
-  { id: "gpt-5.1-codex-max-medium", name: "Codex 5.1 Max", reasoning: false, contextWindow: 200000, maxTokens: 32768 },
+  { id: "gpt-5.1-codex-max-low", name: "Codex 5.1 Max Low", reasoning: true, contextWindow: 200000, maxTokens: 32768 },
+  { id: "gpt-5.1-codex-max-medium", name: "Codex 5.1 Max", reasoning: true, contextWindow: 200000, maxTokens: 32768 },
   { id: "gpt-5.1-codex-max-high", name: "Codex 5.1 Max High", reasoning: true, contextWindow: 200000, maxTokens: 32768 },
   { id: "gpt-5.1-codex-max-xhigh", name: "Codex 5.1 Max Extra High", reasoning: true, contextWindow: 200000, maxTokens: 32768 },
-  { id: "gpt-5.1-codex-max-low-fast", name: "Codex 5.1 Max Low Fast", reasoning: false, contextWindow: 200000, maxTokens: 32768 },
-  { id: "gpt-5.1-codex-max-medium-fast", name: "Codex 5.1 Max Medium Fast", reasoning: false, contextWindow: 200000, maxTokens: 32768 },
+  { id: "gpt-5.1-codex-max-low-fast", name: "Codex 5.1 Max Low Fast", reasoning: true, contextWindow: 200000, maxTokens: 32768 },
+  { id: "gpt-5.1-codex-max-medium-fast", name: "Codex 5.1 Max Medium Fast", reasoning: true, contextWindow: 200000, maxTokens: 32768 },
   { id: "gpt-5.1-codex-max-high-fast", name: "Codex 5.1 Max High Fast", reasoning: true, contextWindow: 200000, maxTokens: 32768 },
   { id: "gpt-5.1-codex-max-xhigh-fast", name: "Codex 5.1 Max Extra High Fast", reasoning: true, contextWindow: 200000, maxTokens: 32768 },
-  { id: "gpt-5.1-codex-mini-low", name: "Codex 5.1 Mini Low", reasoning: false, contextWindow: 200000, maxTokens: 32768 },
-  { id: "gpt-5.1-codex-mini", name: "Codex 5.1 Mini", reasoning: false, contextWindow: 200000, maxTokens: 32768 },
+  { id: "gpt-5.1-codex-mini-low", name: "Codex 5.1 Mini Low", reasoning: true, contextWindow: 200000, maxTokens: 32768 },
+  { id: "gpt-5.1-codex-mini", name: "Codex 5.1 Mini", reasoning: true, contextWindow: 200000, maxTokens: 32768 },
   { id: "gpt-5.1-codex-mini-high", name: "Codex 5.1 Mini High", reasoning: true, contextWindow: 200000, maxTokens: 32768 },
 
   // Claude Opus
@@ -162,11 +165,6 @@ const STATIC_MODELS: CursorModelDef[] = [
   // Kimi
   { id: "kimi-k2.5", name: "Kimi K2.5", reasoning: false, contextWindow: 200000, maxTokens: 32768 },
 ];
-
-/** Fast lookup: static model id → definition */
-const STATIC_MODELS_MAP = new Map<string, CursorModelDef>(
-  STATIC_MODELS.map((m) => [m.id, m]),
-);
 
 // ---------------------------------------------------------------------------
 // Canonical model ID mapping
@@ -434,12 +432,30 @@ const MODEL_MAP: Record<string, ModelVariants> = {
 
 const cursorDefaultToCanonical = new Map<string, string>();
 const allMappedCursorIds = new Set<string>();
+const mappedReasoningCursorIds = new Set<string>();
 for (const [canonicalId, variants] of Object.entries(MODEL_MAP)) {
   if (variants.default) cursorDefaultToCanonical.set(variants.default, canonicalId);
   for (const cursorId of Object.values(variants)) {
     if (cursorId) allMappedCursorIds.add(cursorId);
   }
+  for (const level of ["minimal", "low", "medium", "high", "xhigh"] satisfies ReasoningLevel[]) {
+    const cursorId = variants[level];
+    if (cursorId) mappedReasoningCursorIds.add(cursorId);
+  }
 }
+
+function isReasoningModelId(id: string): boolean {
+  return THINKING_VARIANT_RE.test(id) || mappedReasoningCursorIds.has(id);
+}
+
+for (const model of STATIC_MODELS) {
+  model.reasoning = model.reasoning || isReasoningModelId(model.id);
+}
+
+/** Fast lookup: static model id → definition */
+const STATIC_MODELS_MAP = new Map<string, CursorModelDef>(
+  STATIC_MODELS.map((m) => [m.id, m]),
+);
 
 /**
  * Convert a Cursor CLI model ID to its canonical ID.
@@ -465,6 +481,18 @@ function toCursorId(canonicalId: string, reasoning?: string): string {
   return variant ?? family.default ?? canonicalId;
 }
 
+function hasReasoningVariants(canonicalId: string): boolean {
+  const family = MODEL_MAP[canonicalId];
+  if (!family) return false;
+  return Boolean(
+    family.minimal
+    || family.low
+    || family.medium
+    || family.high
+    || family.xhigh,
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Dynamic model discovery via `agent models`
 // ---------------------------------------------------------------------------
@@ -472,13 +500,9 @@ function toCursorId(canonicalId: string, reasoning?: string): string {
 /** Timeout (ms) for `agent models` discovery call. */
 const DISCOVERY_TIMEOUT_MS = 15_000;
 
-/**
- * Infer the `reasoning` flag for a model that is not in the static list.
- * Models whose id contains -thinking or ends with -high, -xhigh, -max-high,
- * or -max are treated as reasoning/extended-thinking models.
- */
+/** Infer the `reasoning` flag for a model that is not in the static list. */
 function inferReasoning(id: string): boolean {
-  return /-thinking(?:-|$)|-high$|-xhigh$|-max-high$|-max$/.test(id);
+  return isReasoningModelId(id);
 }
 
 /**
@@ -966,7 +990,7 @@ function toProviderModels(defs: CursorModelDef[]) {
       {
         id,
         name: `${m.name} (Cursor)`,
-        reasoning: m.reasoning,
+        reasoning: m.reasoning || hasReasoningVariants(id),
         input: ["text"] as ("text" | "image")[],
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
         contextWindow: m.contextWindow,
