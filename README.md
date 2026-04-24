@@ -264,6 +264,7 @@ Supported Cursor CLI tools that appear in Pi's output:
 | `globToolCall` | Glob |
 | `lsToolCall` | Ls |
 | `todoToolCall` | Todo |
+| `updateTodosToolCall` | UpdateTodos |
 | `webFetchToolCall` | WebFetch |
 | `webSearchToolCall` | WebSearch |
 

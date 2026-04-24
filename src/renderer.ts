@@ -58,6 +58,106 @@ function getRecord(value: unknown): Record<string, unknown> | undefined {
         : undefined;
 }
 
+function getArray(value: unknown): unknown[] | undefined {
+    return Array.isArray(value) ? value : undefined;
+}
+
+function getTodoItems(value: unknown): Record<string, unknown>[] {
+    return (getArray(value) ?? [])
+        .map((item) => getRecord(item))
+        .filter((item): item is Record<string, unknown> => Boolean(item));
+}
+
+function normalizeTodoStatus(value: unknown): {
+    color: "error" | "muted" | "success" | "warning";
+    label: string;
+    marker: string;
+} {
+    const raw = getString(value)?.trim();
+    const normalized = raw?.replace(/^TODO_STATUS_/, "").toLowerCase();
+
+    switch (normalized) {
+        case "completed":
+            return { color: "success", label: "completed", marker: "[x]" };
+        case "in_progress":
+            return { color: "warning", label: "in progress", marker: "[>]" };
+        case "pending":
+            return { color: "muted", label: "pending", marker: "[ ]" };
+        case "cancelled":
+            return { color: "error", label: "cancelled", marker: "[-]" };
+        default:
+            return {
+                color: "warning",
+                label: raw?.replace(/^TODO_STATUS_/, "") || "unknown",
+                marker: "[?]",
+            };
+    }
+}
+
+function formatTodoTitle(
+    toolName: "todo" | "updateTodos",
+    args: Record<string, unknown>,
+): string | null {
+    const todos = getTodoItems(args.todos);
+    if (!todos.length) return null;
+
+    const countLabel = `${todos.length} ${todos.length === 1 ? "item" : "items"}`;
+    const mergeLabel =
+        toolName === "updateTodos"
+            ? theme.fg("muted", args.merge === true ? " (merge)" : " (replace)")
+            : "";
+
+    return `${theme.fg("toolTitle", theme.bold(toolName))} ${theme.fg("accent", countLabel)}${mergeLabel}`;
+}
+
+function formatTodoResultLines(payload: CursorToolCallPayload): {
+    isError: boolean;
+    lines: string[];
+} {
+    const success = payload.result?.success;
+    const todos = getTodoItems(success?.todos ?? payload.args?.todos);
+    if (!todos.length) {
+        return { isError: false, lines: [theme.fg("muted", "No todo items.")] };
+    }
+
+    const maxVisible = 8;
+    const lines = todos.slice(0, maxVisible).map((todo, index) => {
+        const status = normalizeTodoStatus(todo.status);
+        const content =
+            getString(todo.content)?.trim() ||
+            getString(todo.id)?.trim() ||
+            `Todo ${index + 1}`;
+        const id = getString(todo.id)?.trim();
+        const dependencies = getArray(todo.dependencies)?.length ?? 0;
+
+        let line =
+            `${theme.fg(status.color, status.marker)} ` +
+            theme.fg("toolOutput", content);
+
+        if (id && id !== content) {
+            line += theme.fg("muted", ` (${id})`);
+        }
+
+        if (dependencies > 0) {
+            line += theme.fg("muted", ` deps:${dependencies}`);
+        }
+
+        if (status.label !== "pending") {
+            line += theme.fg("muted", ` ${status.label}`);
+        }
+
+        return line;
+    });
+
+    if (todos.length > maxVisible) {
+        lines.push(
+            theme.fg("muted", `... (${todos.length - maxVisible} more items)`),
+        );
+    }
+
+    return { isError: false, lines };
+}
+
 function shortenDisplayPath(value: unknown, maxLength = 60): string | null {
     const path = getString(value);
     if (path == null) return null;
@@ -175,9 +275,7 @@ function formatToolCallTitle(
             return text;
         }
         case "webFetch":
-        case "webSearch":
-        case "todo":
-        case "updateTodos": {
+        case "webSearch": {
             const summary =
                 getString(args.path) ??
                 getString(args.url) ??
@@ -186,6 +284,12 @@ function formatToolCallTitle(
                 previewText(JSON.stringify(args));
             return `${theme.fg("toolTitle", theme.bold(toolName))} ${theme.fg("accent", summary)}`;
         }
+        case "todo":
+        case "updateTodos":
+            return (
+                formatTodoTitle(toolName, args) ??
+                `${theme.fg("toolTitle", theme.bold(toolName))} ${theme.fg("toolOutput", previewText(JSON.stringify(args)))}`
+            );
         default:
             return `${theme.fg("toolTitle", theme.bold(toolName))} ${theme.fg("toolOutput", previewText(JSON.stringify(args)))}`;
     }
@@ -319,6 +423,10 @@ function formatToolResultLines(
             }
             return { isError: false, lines };
         }
+    }
+
+    if (toolName === "todo" || toolName === "updateTodos") {
+        return formatTodoResultLines(payload);
     }
 
     const genericText =
