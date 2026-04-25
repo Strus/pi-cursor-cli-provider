@@ -187,8 +187,8 @@ function formatToolCallTitle(
                 command == null
                     ? invalidArgLabel()
                     : command
-                        ? command
-                        : theme.fg("toolOutput", "...");
+                      ? command
+                      : theme.fg("toolOutput", "...");
             return theme.fg("toolTitle", theme.bold(`$ ${commandDisplay}`));
         }
         case "read": {
@@ -197,8 +197,8 @@ function formatToolCallTitle(
                 path == null
                     ? invalidArgLabel()
                     : path
-                        ? theme.fg("accent", path)
-                        : theme.fg("toolOutput", "...");
+                      ? theme.fg("accent", path)
+                      : theme.fg("toolOutput", "...");
             const offset = args.offset;
             const limit = args.limit;
             if (typeof offset === "number" || typeof limit === "number") {
@@ -221,8 +221,8 @@ function formatToolCallTitle(
                 path == null
                     ? invalidArgLabel()
                     : path
-                        ? theme.fg("accent", path)
-                        : theme.fg("toolOutput", "...");
+                      ? theme.fg("accent", path)
+                      : theme.fg("toolOutput", "...");
             return `${theme.fg("toolTitle", theme.bold(toolName))} ${pathDisplay}`;
         }
         case "grep":
@@ -235,9 +235,9 @@ function formatToolCallTitle(
                 (pattern == null
                     ? invalidArgLabel()
                     : theme.fg(
-                        "accent",
-                        toolName === "grep" ? `/${pattern}/` : pattern,
-                    )) +
+                          "accent",
+                          toolName === "grep" ? `/${pattern}/` : pattern,
+                      )) +
                 theme.fg(
                     "toolOutput",
                     ` in ${path == null ? invalidArgLabel() : path}`,
@@ -436,34 +436,30 @@ function formatToolResultLines(
 }
 
 function renderToolBlock(
-    _bg: ToolBlockBg,
+    bg: ToolBlockBg,
     title: string,
     bodyLines: string[] = [],
 ): string {
-    const blockLines: string[] = [];
-    blockLines.push(""); // top padding
-    blockLines.push("");
-    blockLines.push(`  ${title}`);
-    if (bodyLines.length > 0) {
-        blockLines.push(""); // separator between title and body
-        for (const line of bodyLines) {
-            blockLines.push(`  ${line}`);
-        }
-    }
-    blockLines.push("");
-    blockLines.push(""); // bottom padding
+    const borderColor =
+        bg === "toolErrorBg"
+            ? "error"
+            : bg === "toolSuccessBg"
+              ? "success"
+              : "warning";
 
-    return blockLines.join("\n");
+    const innerLines = [title, ...bodyLines];
+    const wrappedLines = innerLines.map((line) => {
+        const content = line === "" ? " " : line;
+        return `${theme.fg(borderColor, "│")} ${theme.bg(bg, content)} ${theme.fg(borderColor, "│")}`;
+    });
 
-    // BELOW DOES NOT WORK AS EXPECTED
-    // Wrap ALL lines in a single theme.bg() call. The ANSI bg-start code
-    // lands on the first sub-line; wrapTextWithAnsi's AnsiCodeTracker
-    // carries it forward to every subsequent sub-line. Because the bg
-    // reset (\x1b[49m) only appears at the very end, the Markdown
-    // renderer's right-margin and width-padding characters inherit the
-    // active bg — giving us near-full-width coloured blocks without
-    // needing access to the Box component.
-    // return `\n${theme.bg(bg, blockContent)}\n`;
+    return [
+        "",
+        theme.fg(borderColor, "╭─ tool call ─"),
+        ...wrappedLines,
+        theme.fg(borderColor, "╰─────────────"),
+        "",
+    ].join("\n");
 }
 
 export function renderCompletedToolCall(
