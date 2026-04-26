@@ -1,9 +1,35 @@
 # Changelog
 
-All notable changes to this project will be documented in this file.
+## [0.9.2]
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+### Changed
+
+- Documentation refresh: added an npm version badge, embedded a screenshot in the README, fixed some grammar and spelling.
+
+## [0.9.1]
+
+### Fixed
+
+- Follow-up packaging release to fix an npm publish issue.
+
+## [0.9.0]
+
+### Added
+
+- **Cursor session resume support**: Pi sessions can now be mapped back to saved Cursor sessions so later turns can resume the existing Cursor chat instead of resending the full conversation.
+- **Image support**: pasted images and non-interactive image blobs are written to temporary files and forwarded to Cursor CLI as file paths.
+- **Richer streaming rendering**: added support for rendering thinking blocks, todo-related tool calls, edit tool diffs, and improved tool call formatting in general.
+
+### Changed
+
+- Forked and repackaged the project as `@akepka/pi-cursor-cli-provider`.
+- Rewrote the README
+- Updated the discovered models list and added the Cursor CLI `--yolo` flag
+
+### Fixed
+
+- Fixed reasoning effort mapping for Cursor model variants.
+- Do not register the provider when `agent models` fails, avoiding a broken provider state at startup.
 
 ## [0.1.2]
 
