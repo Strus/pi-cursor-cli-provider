@@ -1134,7 +1134,7 @@ export function toProviderModels(defs: CursorModelDef[]) {
                 id,
                 name: `${m.name} (Cursor)`,
                 reasoning: m.reasoning || hasReasoningVariants(id),
-                input: ["text"] as ("text" | "image")[],
+                input: ["text", "image"] as ("text" | "image")[],
                 cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
                 contextWindow: m.contextWindow,
                 maxTokens: m.maxTokens,

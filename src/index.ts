@@ -13,12 +13,16 @@
  */
 
 import { spawn } from "node:child_process";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createInterface } from "node:readline";
 import type {
     Api,
     AssistantMessage,
     AssistantMessageEventStream,
     Context,
+    ImageContent,
     Model,
     SimpleStreamOptions,
     TextContent,
@@ -54,27 +58,80 @@ interface CursorSessionState {
     pending: string | null | undefined;
 }
 
-/**
- * Convert a content block (text or image) to a plain string for the CLI prompt.
- * Images are serialised as a textual placeholder because the Cursor Agent CLI
- * (v2026.02.13) does not support image attachments in the `--print` prompt.
- * The placeholder preserves the image's MIME type and byte-size so the model
- * can at least acknowledge that an image was intended.
- */
-function contentBlockToText(block: TextContent | import("@mariozechner/pi-ai").ImageContent): string {
+interface PromptTempFiles {
+    dir: string | null;
+    imageCount: number;
+}
+
+const MIME_TYPE_TO_EXTENSION: Record<string, string> = {
+    "image/png": "png",
+    "image/jpeg": "jpg",
+    "image/jpg": "jpg",
+    "image/webp": "webp",
+    "image/gif": "gif",
+    "image/svg+xml": "svg",
+    "image/bmp": "bmp",
+    "image/tiff": "tiff",
+};
+
+function stripDataUrlPrefix(data: string): string {
+    return data.replace(/^data:[^;]+;base64,/, "").replace(/\s+/g, "");
+}
+
+function getImageExtension(mimeType: string): string {
+    return MIME_TYPE_TO_EXTENSION[mimeType] ?? "bin";
+}
+
+async function ensurePromptTempDir(state: PromptTempFiles): Promise<string> {
+    if (state.dir) return state.dir;
+    state.dir = await mkdtemp(join(tmpdir(), "pi-cursor-cli-images-"));
+    return state.dir;
+}
+
+async function cleanupPromptTempFiles(state: PromptTempFiles): Promise<void> {
+    if (!state.dir) return;
+    const dir = state.dir;
+    state.dir = null;
+    await rm(dir, { recursive: true, force: true });
+}
+
+async function imageBlockToPromptText(block: ImageContent, state: PromptTempFiles): Promise<string> {
+    try {
+        const dir = await ensurePromptTempDir(state);
+        state.imageCount += 1;
+        const extension = getImageExtension(block.mimeType);
+        const path = join(dir, `image-${state.imageCount}.${extension}`);
+        const data = stripDataUrlPrefix(block.data);
+        await writeFile(path, Buffer.from(data, "base64"));
+        return path;
+    } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        throw new Error(`Failed to save image (${block.mimeType}) to a temporary file for Cursor CLI: ${reason}`);
+    }
+}
+
+async function contentBlockToText(block: TextContent | ImageContent, state: PromptTempFiles): Promise<string> {
     if (block.type === "text") return block.text;
-    // ImageContent: { type: "image", data: string (base64), mimeType: string }
-    const bytes = Math.round((block.data.length * 3) / 4);
-    return `[Image: ${block.mimeType}, ~${bytes} bytes — note: image input is not supported by the Cursor Agent CLI; the visual content cannot be passed through]`;
+    return imageBlockToPromptText(block, state);
 }
 
-function serializeMessageContent(
-    content: string | (TextContent | import("@mariozechner/pi-ai").ImageContent)[],
-): string {
-    return typeof content === "string" ? content : content.map(contentBlockToText).join("\n");
+async function serializeContentBlocks(blocks: (TextContent | ImageContent)[], state: PromptTempFiles): Promise<string> {
+    const lines: string[] = [];
+    for (const block of blocks) {
+        lines.push(await contentBlockToText(block, state));
+    }
+    return lines.join("\n");
 }
 
-function serializeContext(context: Context): string {
+async function serializeMessageContent(
+    content: string | (TextContent | ImageContent)[],
+    state: PromptTempFiles,
+): Promise<string> {
+    if (typeof content === "string") return content;
+    return serializeContentBlocks(content, state);
+}
+
+async function serializeContext(context: Context, state: PromptTempFiles): Promise<string> {
     const lines: string[] = [];
 
     if (context.systemPrompt) {
@@ -83,7 +140,7 @@ function serializeContext(context: Context): string {
 
     for (const msg of context.messages) {
         if (msg.role === "user") {
-            const text = serializeMessageContent(msg.content);
+            const text = await serializeMessageContent(msg.content, state);
             lines.push(`[User]\n${text}`);
         } else if (msg.role === "assistant") {
             const text = msg.content
@@ -94,7 +151,7 @@ function serializeContext(context: Context): string {
                 lines.push(`[Assistant]\n${text}`);
             }
         } else if (msg.role === "toolResult") {
-            const text = msg.content.map(contentBlockToText).join("\n");
+            const text = await serializeContentBlocks(msg.content, state);
             if (text.trim()) {
                 lines.push(`[Tool result: ${msg.toolName}]\n${text}`);
             }
@@ -104,13 +161,13 @@ function serializeContext(context: Context): string {
     return lines.join("\n\n");
 }
 
-function serializeLatestUserPrompt(context: Context): string {
+async function serializeLatestUserPrompt(context: Context, state: PromptTempFiles): Promise<string> {
     for (let i = context.messages.length - 1; i >= 0; i -= 1) {
         const message = context.messages[i];
         if (message.role !== "user") continue;
-        return serializeMessageContent(message.content);
+        return serializeMessageContent(message.content, state);
     }
-    return serializeContext(context);
+    return serializeContext(context, state);
 }
 
 function restoreCursorSessionId(ctx: ExtensionContext): string | undefined {
@@ -258,13 +315,18 @@ function createStreamCursorCli(cursorSessionState: CursorSessionState) {
                 output.ttft = firstTokenTime != null ? firstTokenTime - startTime : undefined;
             };
 
+            const promptTempFiles: PromptTempFiles = {
+                dir: null,
+                imageCount: 0,
+            };
+
             try {
                 const agentPath = getCursorAgentPath();
 
                 const workspacePath = process.cwd();
                 const prompt = cursorSessionState.current
-                    ? serializeLatestUserPrompt(context)
-                    : serializeContext(context);
+                    ? await serializeLatestUserPrompt(context, promptTempFiles)
+                    : await serializeContext(context, promptTempFiles);
                 const reasoningLevel = (options as { reasoning?: string })?.reasoning;
                 const cliModelId = toCursorId(model.id, reasoningLevel);
 
@@ -538,6 +600,8 @@ function createStreamCursorCli(cursorSessionState: CursorSessionState) {
                     error: output,
                 });
                 stream.end();
+            } finally {
+                await cleanupPromptTempFiles(promptTempFiles);
             }
         })();
 
