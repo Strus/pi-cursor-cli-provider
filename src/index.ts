@@ -38,6 +38,11 @@ import { type CursorToolCallPayload, renderCompletedToolCall, setRendererTheme }
 // ---------------------------------------------------------------------------
 
 const CURSOR_SESSION_ENTRY_TYPE = "cursor-cli-session";
+const DEFAULT_CURSOR_AGENT_PATH = "agent";
+
+function getCursorAgentPath(): string {
+    return process.env.CURSOR_AGENT_PATH ?? process.env.AGENT_PATH ?? DEFAULT_CURSOR_AGENT_PATH;
+}
 
 interface CursorSessionEntryData {
     cursorSessionId: string | null;
@@ -254,7 +259,7 @@ function createStreamCursorCli(cursorSessionState: CursorSessionState) {
             };
 
             try {
-                const agentPath = process.env.CURSOR_AGENT_PATH ?? process.env.AGENT_PATH ?? "agent";
+                const agentPath = getCursorAgentPath();
 
                 const workspacePath = process.cwd();
                 const prompt = cursorSessionState.current
@@ -545,7 +550,7 @@ function createStreamCursorCli(cursorSessionState: CursorSessionState) {
 // ---------------------------------------------------------------------------
 
 export default async function (pi: ExtensionAPI) {
-    const agentPath = process.env.CURSOR_AGENT_PATH ?? process.env.AGENT_PATH ?? "agent";
+    const agentPath = getCursorAgentPath();
     const cursorSessionState: CursorSessionState = {
         current: undefined,
         persisted: null,
@@ -575,12 +580,12 @@ export default async function (pi: ExtensionAPI) {
         persistCursorSessionId(pi, cursorSessionState, pending ?? undefined);
     });
 
-    // Attempt dynamic model discovery; fall back to static list on any failure.
     let modelDefs = STATIC_MODELS;
     try {
         modelDefs = await runAgentModels(agentPath);
     } catch {
-        modelDefs = STATIC_MODELS;
+        // assume CLI is not available if `agent models` fails - do not register provider
+        return;
     }
 
     pi.registerProvider("cursor", {
