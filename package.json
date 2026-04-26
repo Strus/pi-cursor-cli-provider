@@ -1,6 +1,6 @@
 {
     "name": "@akepka/pi-cursor-cli-provider",
-    "version": "0.9.1",
+    "version": "0.9.2",
     "description": "Cursor CLI provider extension for Pi",
     "keywords": [
         "pi",
