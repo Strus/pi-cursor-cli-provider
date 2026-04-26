@@ -1,307 +1,96 @@
+<p align="center">
+  <img src="./header.jpeg" alt="Pi x Cursor image" width="400" />
+</p>
+
 # pi-cursor-cli-provider
 
-[![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Node.js ≥20](https://img.shields.io/badge/node-%3E%3D20-brightgreen.svg)](https://nodejs.org)
-[![Pi package](https://img.shields.io/badge/pi-package-00b4d8.svg)](https://github.com/badlogic/pi-mono)
-[![Cursor](https://img.shields.io/badge/Cursor-AI_IDE-000000?logo=cursor&logoColor=white)](https://cursor.com)
+A [Pi Coding Agent](https://github.com/badlogic/pi-mono) custom provider that routes model requests through the **Cursor
+CLI**, enabling you to use your Cursor subscription inside Pi.
 
-A [Pi Coding Agent](https://github.com/badlogic/pi-mono) custom provider that routes model requests through the **Cursor Agent CLI**, enabling you to use any model available on your Cursor subscription — Claude (Opus, Sonnet), GPT, Gemini, Grok, and more — from inside Pi.
+This project is heavily modified fork of [netandreus/pi-cursor-provider](https://github.com/netandreus/pi-cursor-provider)
 
-No separate API keys are needed for the models themselves. Authentication is handled by the Cursor CLI using your existing Cursor account.
+# Motivation
 
----
+(if you don't feel like reading all this, go straight to [Installation](#installation))
 
-## Contents
-- [pi-cursor-provider](#pi-cursor-provider)
-  - [Contents](#contents)
-  - [Prerequisites](#prerequisites)
-  - [Installation](#installation)
-    - [Option A — Install from npm (recommended)](#option-a--install-from-npm-recommended)
-    - [Option B — Install from source](#option-b--install-from-source)
-    - [Option C — Try without installing](#option-c--try-without-installing)
-  - [Uninstall](#uninstall)
-    - [Option A — Installed from npm (recommended)](#option-a--installed-from-npm-recommended)
-    - [Option B — Installed from source](#option-b--installed-from-source)
-  - [Authentication](#authentication)
-    - [First-time setup](#first-time-setup)
-    - [Auth commands inside Pi](#auth-commands-inside-pi)
-    - [Verify auth](#verify-auth)
-  - [Usage](#usage)
-  - [Available models](#available-models)
-    - [Model reference table](#model-reference-table)
-  - [Configuration](#configuration)
-  - [How it works](#how-it-works)
-  - [Tool calls](#tool-calls)
-  - [Installing and enabling MCP tools in Cursor Agent for Pi](#installing-and-enabling-mcp-tools-in-cursor-agent-for-pi)
-  - [Image input](#image-input)
-  - [Limitations](#limitations)
-  - [Troubleshooting](#troubleshooting)
-  - [References](#references)
-  - [License](#license)
+I spend a long time looking for a proper Cursor provider for Pi, but the ones that were working best were too "hacky" in
+my opinion - they used the reverse-engineered API to call Cursor endpoints directly, masquarading as legit Cursor CLI.
+They also had various issues - like not passing system prompt properly.
 
+I've also tried to write my own extension based on the [ACP protocol](https://agentcommunicationprotocol.dev/) - and I
+even did do it to a point where I could use Cursor with it - but Cursor's do not expose all models through ACP! And the
+ones they do expose are exposed only in one variant - ex. only with "medium" thinking. This makes this apporach in my
+opinion unusable.
 
----
+After all that I stumbled upon [netandreus/pi-cursor-provider](https://github.com/netandreus/pi-cursor-provider). It
+worked, and most importantly, it used the legit Cursor CLI without any hacks. But it wasn't super polished - tool calls
+rendering was basically just raw text, all session history was send as prompt on every turn, images were not supported
+etc. But the idea was cool, so I decided to build on top of it.
 
-## Prerequisites
+# Installation
 
-| Requirement | Details |
-|---|---|
-| [Pi Coding Agent](https://github.com/badlogic/pi-mono) | `npm install -g @mariozechner/pi-coding-agent` (v0.53.0+) |
-| [Cursor Agent CLI](https://cursor.com/docs/cli/overview) | Installed and available on `PATH` (or provide the path via `CURSOR_AGENT_PATH`) |
-| Cursor account | Free or paid; available models depend on your subscription |
+### npm
 
----
+```bash
+pi install npm:@akepka/pi-cursor-cli-provider
+```
 
-## Installation
-
-### Option A — Install from git (recommended)
+### git
 
 ```bash
 pi install git:github.com/Strus/pi-cursor-cli-provider
 ```
 
-Or for project-local install:
+For the extension to work **you need to have [Cursor CLI](https://cursor.com/docs/cli/installation) installed and
+authenticated**. Auth can be done either with `agent login` command or with token generated from Cursor dashboard and set
+as `CURSOR_API_KEY` env variable. See [Cursor CLI docs](https://cursor.com/docs/cli/reference/authentication) for more
+information.
+
+# Usage
+
+Just start Pi and everything should work. Models are auto-discovered upon start, so you can choose them with
+`/models` or `/scoped-models` as usual. Pi thinking effort settings are mapped to Cursor model names - you choose the base
+model name and set thinking level with `shift-tab` like you would normally do.
+
+# How it works
+
+Each Pi turn spawns a Cursor Agent CLI subprocess. The first turn sends the full Pi transcript; later turns resume the
+saved Cursor chat session and send only the newest user prompt:
 
 ```bash
-pi install git:github.com/Strus/pi-cursor-cli-provider -l
+agent --print --yolo --output-format stream-json --model <id> --trust --workspace <cwd> "<full prompt>"
+
+# later turns agent
+agent --print --yolo --output-format stream-json --model <id> --resume <session-id> --trust --workspace <cwd> "<latest user prompt>"
 ```
 
-### Option B — Install from source
+Cursor session IDs are saved and associated with Pi session IDs - thanks to that even if you resume the Pi session,
+provider does not need to send it to Cursor CLI, but can resume Cursor session too.
 
-From the repository root:
+The CLI's NDJSON stdout is read line-by-line, and it's output is mapped (when possible) to Pi native rendering elements
+(ex. thinking blocks).
 
-```bash
-git clone https://github.com/Strus/pi-cursor-cli-provider.git
-cd pi-cursor-provider-cli
-pi install .
-```
+Cursor CLI supports images when you provide a file path to them, so images pasted to Pi are supported out-of-the-box, as
+Pi provides the path to a temporary file when you paste an image. In non-interactive mode if prompt contains a blob of
+image data, that data is saved as a temporary file, and then path to that file is passed to the Cursor CLI.
 
-### Option C — Try without installing
+# Installing and enabling MCP tools in Cursor Agent for Pi
 
-```bash
-pi -e git:github.com/Strus/pi-cursor-cli-provider
-```
-
-## Uninstall
-
-### Option A — Installed from git (recommended)
-```bash
-pi remove git:github.com/Strus/pi-cursor-cli-provider
-```
-
-### Option B — Installed from source
-```bash
-# You can find installed path right after running "pi"
-pi remove ~/sandbox/pi-cursor-provider-cli
-```
----
-
-## Authentication
-
-The provider delegates authentication entirely to the Cursor CLI. Your Cursor credentials are stored and managed by the CLI itself (`~/.cursor/`).
-
-### First-time setup
-
-```bash
-# Option 1 — Interactive browser-based login (recommended)
-agent login
-
-# Option 2 — API key
-export CURSOR_API_KEY=your_cursor_api_key
-```
-
-If `CURSOR_API_KEY` is set it is forwarded to every `agent` subprocess via `--api-key` automatically.
-
-
-### Verify auth
-
-```bash
-agent status
-```
-
-Expected output when authenticated:
-```
- ✓ Logged in as you@example.com
-```
-
----
-
-## Usage
-
-After loading the extension, select a Cursor model with the `/model` command:
-
-```
-/model cursor/auto
-/model cursor/sonnet-4.6-thinking
-/model cursor/gpt-5.2
-/model cursor/gemini-3-pro
-```
-
-You can also specify the model on the command line:
-
-```bash
-pi -e git:github.com/Strus/pi-cursor-cli-provider --provider cursor --model auto
-```
-
-Or pipe a prompt non-interactively:
-
-```bash
-echo "Explain the main function in this file" | \
-  pi -e git:github.com/Strus/pi-cursor-cli-provider --provider cursor --model sonnet-4.6
-```
-
----
-
-## Available models
-
-At startup the extension runs `agent models` to discover the **account-specific** model list from your Cursor subscription. The list is cached for the lifetime of the Pi session.
-
-If discovery fails (e.g. the CLI is not installed, not authenticated, or times out), a built-in static fallback list is used automatically — no crash, no user action needed.
-
-To see the models currently available to your account:
-
-```bash
-agent models
-```
-
-Models whose id contains `-thinking`, `-high`, `-xhigh`, `-medium`, `-low`, or `-max-high` are marked as reasoning models in Pi. All other metadata (contextWindow, maxTokens) is derived from the static lookup table or set to safe defaults (200k context / 32k max tokens) for models not in the table.
-
-When you use a **canonical ID** (e.g. `claude-sonnet-4-5`), the provider can send the thinking variant to the CLI when Pi’s reasoning level is enabled.
-
-### Model reference table
-
-Subset of models supported by the provider (see `src/models.ts` for the full static list and `MODEL_MAP`). Use the **Canonical ID** with `/model cursor/<id>`. Short CLI-style aliases (e.g. `sonnet-4.6`) are accepted when they appear as keys in `MODEL_MAP`. The full list for your account is discoverable via `agent models`.
-
-| Canonical ID | CLI model ID (resolved) | Name (typical) | Reasoning |
-|---|---|---|---|
-| `auto` | `auto` | Auto | — |
-| `claude-sonnet-4-5` / `sonnet-4.5` | `claude-4.5-sonnet`, `claude-4.5-sonnet-thinking` | Sonnet 4.5 (1M) | yes (thinking when enabled) |
-| `claude-sonnet-4-6` / `sonnet-4.6` | `claude-4.6-sonnet-medium`, `claude-4.6-sonnet-medium-thinking` | Sonnet 4.6 (1M) | yes (thinking when enabled) |
-| `claude-sonnet-4` | `claude-4-sonnet`, `claude-4-sonnet-thinking` | Sonnet 4 | yes (thinking when enabled) |
-| `claude-sonnet-4-1m` | `claude-4-sonnet-1m`, `claude-4-sonnet-1m-thinking` | Sonnet 4 (1M) | yes (thinking when enabled) |
-| `claude-opus-4-5` / `opus-4.5` | `claude-4.5-opus-high`, `claude-4.5-opus-high-thinking` | Opus 4.5 | yes (thinking when enabled) |
-| `claude-opus-4-6` / `opus-4.6` | `claude-4.6-opus-high`, … `claude-4.6-opus-max-thinking` | Opus 4.6 (1M) | yes (tiered / max) |
-| `claude-opus-4-6-fast` | `claude-4.6-opus-high-thinking-fast`, … | Opus 4.6 (1M) Fast | yes |
-| `claude-opus-4-7` | `claude-opus-4-7-xhigh`, … `claude-opus-4-7-thinking-*`, `…-max` | Opus 4.7 (1M) | yes (thinking tiers) |
-| `gpt-5.4` | `gpt-5.4-low`, `gpt-5.4-medium`, `gpt-5.4-high`, `gpt-5.4-xhigh` | GPT-5.4 (1M) | yes |
-| `gpt-5.4-fast` | `gpt-5.4-medium-fast`, `gpt-5.4-high-fast`, `gpt-5.4-xhigh-fast` | GPT-5.4 Fast (1M) | yes |
-| `gpt-5.4-mini` | `gpt-5.4-mini-low`, … `gpt-5.4-mini-xhigh` | GPT-5.4 Mini | yes (none tier: `gpt-5.4-mini-none`) |
-| `gpt-5.4-nano` | `gpt-5.4-nano-low`, … `gpt-5.4-nano-xhigh` | GPT-5.4 Nano | yes (none tier: `gpt-5.4-nano-none`) |
-| `gpt-5.3-codex` | `gpt-5.3-codex`, `-low`, `-high`, `-xhigh` | Codex 5.3 | yes |
-| `gpt-5.3-codex-fast` | `gpt-5.3-codex-fast`, `-low-fast`, … | Codex 5.3 Fast | yes |
-| `gpt-5.3-codex-spark-preview` | `gpt-5.3-codex-spark-preview`, `-low`, `-high`, `-xhigh` | Codex 5.3 Spark (preview) | yes |
-| `gpt-5.2` | `gpt-5.2`, `gpt-5.2-low`, `gpt-5.2-high`, `gpt-5.2-xhigh` | GPT-5.2 | yes |
-| `gpt-5.2-fast` | `gpt-5.2-fast`, `gpt-5.2-low-fast`, … | GPT-5.2 Fast | yes |
-| `gpt-5.2-codex` | `gpt-5.2-codex`, `-low`, `-high`, `-xhigh` | Codex 5.2 | yes |
-| `gpt-5.2-codex-fast` | `gpt-5.2-codex-fast`, `-low-fast`, … | Codex 5.2 Fast | yes |
-| `gpt-5.1` | `gpt-5.1`, `gpt-5.1-low`, `gpt-5.1-high` | GPT-5.1 | yes |
-| `gpt-5.1-codex-max` | `gpt-5.1-codex-max-medium`, … `-xhigh` | Codex 5.1 Max | yes |
-| `gpt-5.1-codex-max-fast` | `gpt-5.1-codex-max-medium-fast`, … | Codex 5.1 Max Fast | yes |
-| `gpt-5.1-codex-mini` | `gpt-5.1-codex-mini`, `-low`, `-high` | Codex 5.1 Mini | yes |
-| `gpt-5-mini` | `gpt-5-mini` | GPT-5 Mini | — |
-| `gemini-3-pro` / `gemini-3-pro-preview` / `gemini-3.1-pro-preview` | `gemini-3.1-pro` | Gemini 3.1 Pro | — |
-| `gemini-3-flash-preview` | `gemini-3-flash` | Gemini 3 Flash | — |
-| `grok` / `grok-code-fast-1` / `grok-4-20` | `grok-4-20`, `grok-4-20-thinking` | Grok 4.20 | yes (thinking when enabled) |
-| `composer-2` | `composer-2` | Composer 2 | — |
-| `composer-2-fast` | `composer-2-fast` | Composer 2 Fast | — |
-| `composer-1.5` | `composer-1.5` | Composer 1.5 | — |
-| `kimi-k2.5` | `kimi-k2.5` | Kimi K2.5 | — |
-
----
-
-## Configuration
-
-| Environment variable | Default | Description |
-|---|---|---|
-| `CURSOR_AGENT_PATH` | `agent` | Full path to the Cursor Agent CLI binary. |
-| `AGENT_PATH` | `agent` | Fallback if `CURSOR_AGENT_PATH` is not set. |
-| `CURSOR_API_KEY` | *(none)* | Cursor API key; passed to CLI via `--api-key` if set. |
-
-Example:
-
-```bash
-export CURSOR_AGENT_PATH=$HOME/.local/bin/agent
-pi -e git:github.com/Strus/pi-cursor-cli-provider --provider cursor --model auto
-```
-
----
-
-## How it works
-
-Each Pi turn spawns a Cursor Agent CLI subprocess. The first turn sends the
-full Pi transcript; later turns resume the saved Cursor chat session and send
-only the newest user prompt:
-
-```
-agent --print --output-format stream-json --model <id> --trust --workspace <cwd> "<full prompt>"
-# later turns
-agent --print --output-format stream-json --model <id> --resume <session-id> --trust --workspace <cwd> "<latest user prompt>"
-```
-
-The extension serialises the Pi conversation (system prompt + message history)
-into a single text prompt for the first CLI call. When the Cursor CLI emits a
-`session_id`, the provider stores it in the Pi session. Subsequent turns pass
-that id back with `--resume`, so Cursor keeps the conversation state without Pi
-having to resend the whole history every time.
-
-The CLI's NDJSON stdout is read line-by-line; `type: "assistant"` events are
-mapped to Pi stream events (`text_start`, `text_delta`, `text_end`, `done`).
-
-- **Multi-turn context**: The first turn serialises the full message history as
-  a prefixed transcript (`[User] / [Assistant] / [Tool result]`). Once a
-  Cursor session id has been captured, later turns resume that session and send
-  only the latest user message.
-- **Token usage**: Cursor CLI does not expose token counts; usage is reported as 0.
-- **Cost tracking**: Models are registered with `cost: 0` since billing goes through your Cursor subscription.
-
----
-
-## Tool calls
-
-When the Cursor CLI uses tools (Read, Write, Shell, Grep, Ls, Glob, etc.) during a turn, the extension displays those calls inline with the assistant text.
-
-The **Cursor CLI executes all tools** itself — Pi only observes and displays them. Tool arguments and results originate in the Cursor agent's execution environment, not in Pi's tool system.
-
-Supported Cursor CLI tools that appear in Pi's output:
-
-| CLI event key | Display name |
-|---|---|
-| `shellToolCall` | Shell |
-| `readToolCall` | Read |
-| `editToolCall` | Edit |
-| `writeToolCall` | Write |
-| `deleteToolCall` | Delete |
-| `grepToolCall` | Grep |
-| `globToolCall` | Glob |
-| `lsToolCall` | Ls |
-| `todoToolCall` | Todo |
-| `updateTodosToolCall` | UpdateTodos |
-| `webFetchToolCall` | WebFetch |
-| `webSearchToolCall` | WebSearch |
-
----
-
-## Installing and enabling MCP tools in Cursor Agent for Pi
-
-To use Pi-related MCP tools (e.g. `pi-auto`) when the Cursor Agent runs on behalf of Pi, connect the MCP server, enable it for the agent, and allow its tools in the CLI config.
+To use Pi-related MCP tools (e.g. `pi-auto`) when the Cursor Agent runs on behalf of Pi, connect the MCP server, enable
+it for the agent, and allow its tools in the CLI config.
 
 ### 1. Connect MCP server to agent
 
 Add the server to `~/.cursor/mcp.json`. Example for `pi-auto`:
 
-```bash
-cat ~/.cursor/mcp.json
-```
-
 ```json
 {
   "mcpServers": {
-    "pi-auto": {
-      "command": "pi-auto-mcp",
-      "lifecycle": "keep-alive",
-      "directTools": true
-    }
+      "pi-auto": {
+          "command": "pi-auto-mcp",
+          "lifecycle": "keep-alive",
+          "directTools": true
+      }
   }
 }
 ```
@@ -312,22 +101,16 @@ List MCP servers; new ones need approval:
 
 ```bash
 agent mcp list
-```
 
-Example output:
-```
-pi-auto: not loaded (needs approval)
+# Example output: pi-auto: not loaded (needs approval)
 ```
 
 Enable and approve the server:
 
 ```bash
 agent mcp enable pi-auto
-```
 
-Example output:
-```
-✓ Enabled and approved MCP server: pi-auto
+# Example output: ✓ Enabled and approved MCP server: pi-auto
 ```
 
 Verify tools are available:
@@ -337,6 +120,7 @@ agent mcp list-tools pi-auto
 ```
 
 Example output:
+
 ```
 Tools for pi-auto (8):
 - pi_get_priority ()
@@ -355,61 +139,79 @@ Ensure `~/.cursor/cli-config.json` allows the MCP tools. For example:
 
 ```json
 "permissions": {
-  "allow": [
-    "Shell(ls)",
-    "Mcp(pi-auto:*)"
-  ],
+  "allow": [ "Shell(ls)", "Mcp(pi-auto:*)" ],
   "deny": []
 }
 ```
 
 `Mcp(pi-auto:*)` lets the agent use any tool from the `pi-auto` server.
 
----
+# Possible improvements
 
-## Image input
+### Better tool calls rendering
 
-The Cursor Agent CLI does **not** support image attachments in `--print` mode. When Pi messages contain images (e.g. screenshots), the provider serialises them as a textual placeholder:
+Tool calls are not natively rendered (see [Limitations](#limitations) section). I couldn't find a way to mimick native
+rendering because Pi does not expose terminal properties required to do this. Best solution would be to modify Pi to be
+able to emit something like "fake tool call" that Pi would only render but don't try to execute it.
+
+### Delegating tool calls to Pi
+
+I don't know if this would be acutally improvement, but it's an idea I saw in
+[rchern/pi-claude-cli](https://github.com/rchern/pi-claude-cli/) extension - when CLI outputs a tool call, you kill the
+CLI, execute the tool call natively with Pi, and then resume the CLI session providing the tool call results. This would
+fix rendering problems mentioned above, and also allow to use Pi native tools instead of Cursor built-in ones. I don't
+know tho how good that would work in practive.
+
+# Limitations
+
+### Tool calls are not rendered like Pi tool calls
+
+Tool calls are rendered like normal text. They are indented to distinguish them visually at least a little bit from
+assistant output, but we cannot render them like standard Pi tool calls. Emiting tool call events from the stream
+provider (so they would be rendered with standard Pi UI) would result in Pi trying to execute these calls, because
+that's what agentic loop expects - model should output tool call at the end, and then break, waiting for the tool
+execution and result returned. But when we are rendering the tool call, it was already executed by Cursor CLI - and also
+we don't really want Pi to try to execute it, as this would result in double execution.
+
+### No way to track context/token count
+
+Cursor CLI does not report token/context usage at the end, so there is no way to track it for now.
+
+# Troubleshooting
+
+#### I don't see any Cursor models
+
+You Cursor CLI executable (`agent`) was not found. Make sure you have it in `PATH` or set `CURSOR_AGENT_PATH` or
+`AGENT_PATH` env variable to the `agent` executable path.
+
+# Alternatives
+
+- [pi-frontier/pi-cursor-agent](https://github.com/sudosubin/pi-frontier/tree/main/pi-cursor-agent) - most complete
+implementation that uses reversed-engineered API.
+
+# License
 
 ```
-[Image: image/png, ~48320 bytes — note: image input is not supported by the Cursor Agent CLI; the visual content cannot be passed through]
+MIT License
+
+Copyright (c) 2026 Andrey
+Copyright (c) 2026 Adrian Kepka
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 ```
-
-- The text of the conversation is still sent and a response is returned.
-- The model is informed that an image was attached but cannot see its contents.
-- Models are registered with `input: ["text"]` only to reflect this limitation.
-
-Image input will be enabled automatically if a future Cursor CLI version adds an attachment flag.
-
----
-
-## Limitations
-
-- Image content cannot be passed to the model (Cursor CLI limitation — see above).
-- Multi-turn history is serialised as plain text; very long conversations may exceed the model's context window.
-- Token usage is always reported as 0 (the Cursor CLI does not expose token counts).
-
----
-
-## Troubleshooting
-
-| Symptom | Likely cause | Fix |
-|---|---|---|
-| `spawn agent ENOENT` | `agent` binary not on PATH | Set `CURSOR_AGENT_PATH=/path/to/agent` |
-| Empty response / hangs | Not logged in to Cursor | Run `agent login` or set `CURSOR_API_KEY` |
-| `No models available` | Cursor CLI cannot reach the API | Check internet connection and `agent status` |
-| Error on a specific model | Model not in your subscription | Run `agent models` to see available models |
-| NDJSON parse errors | Unexpected CLI output | Check stderr; update Cursor Agent CLI |
-
----
-
-## References
-
-- [Cursor Agent CLI — Overview](https://cursor.com/docs/cli/overview)
-- [Pi](https://pi.dev/)
-
----
-
-## License
-
-[MIT](LICENSE)
