@@ -27,9 +27,9 @@ import type {
     SimpleStreamOptions,
     TextContent,
     ThinkingContent,
-} from "@mariozechner/pi-ai";
-import { createAssistantMessageEventStream } from "@mariozechner/pi-ai";
-import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-ai";
+import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { runAgentModels, STATIC_MODELS, toCursorId, toProviderModels } from "./models.js";
 import { type CursorToolCallPayload, renderCompletedToolCall, setRendererTheme } from "./renderer.js";
 
