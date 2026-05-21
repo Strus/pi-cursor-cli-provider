@@ -185,9 +185,10 @@ that is what the agentic loop expects - a model should output a tool call at the
 execution result to be returned. But by the time we are rendering the tool call, it has already been executed by Cursor
 CLI, and we also do not really want Pi to try to execute it, as this would result in double execution.
 
-### No way to track context/token count
+### Context/token counts are estimates
 
-Cursor CLI does not report token/context usage at the end, so there is no way to track it for now.
+Cursor CLI does not report exact token/context usage at the end. The provider estimates usage from the serialized prompt
+and streamed Cursor output so Pi can still show an approximate context percentage.
 
 # Troubleshooting
 

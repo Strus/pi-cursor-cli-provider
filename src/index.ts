@@ -26,7 +26,7 @@ import type {
     TextContent,
 } from "@earendil-works/pi-ai";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { type ExtensionAPI, type ExtensionContext, estimateTokens } from "@earendil-works/pi-coding-agent";
 import {
     type CursorNativeLiveRun,
     disposeCursorNativeRun,
@@ -64,6 +64,7 @@ interface CursorSessionState {
     current: string | undefined;
     persisted: string | null;
     pending: string | null | undefined;
+    estimatedContextTokens: number | undefined;
 }
 
 interface PromptTempFiles {
@@ -82,12 +83,32 @@ const MIME_TYPE_TO_EXTENSION: Record<string, string> = {
     "image/tiff": "tiff",
 };
 
+const CHARS_PER_TOKEN_ESTIMATE = 4;
+
 function stripDataUrlPrefix(data: string): string {
     return data.replace(/^data:[^;]+;base64,/, "").replace(/\s+/g, "");
 }
 
 function getImageExtension(mimeType: string): string {
     return MIME_TYPE_TO_EXTENSION[mimeType] ?? "bin";
+}
+
+function estimateTextTokens(text: string): number {
+    if (!text) return 0;
+    return Math.ceil(text.length / CHARS_PER_TOKEN_ESTIMATE);
+}
+
+function estimateContextTokens(context: Context): number {
+    return (
+        estimateTextTokens(context.systemPrompt ?? "") +
+        context.messages.reduce((total, message) => total + estimateTokens(message), 0)
+    );
+}
+
+function updateEstimatedUsage(output: AssistantMessage, inputTokens: number, outputTokens: number): void {
+    output.usage.input = inputTokens;
+    output.usage.output = outputTokens;
+    output.usage.totalTokens = inputTokens + outputTokens;
 }
 
 async function ensurePromptTempDir(state: PromptTempFiles): Promise<string> {
@@ -210,9 +231,13 @@ function persistCursorSessionId(
 
 function syncCursorSessionState(ctx: ExtensionContext, state: CursorSessionState): string | undefined {
     const restored = restoreCursorSessionId(ctx);
+    const previous = state.current;
     state.current = restored;
     state.persisted = restored ?? null;
     state.pending = undefined;
+    if (restored !== previous) {
+        state.estimatedContextTokens = undefined;
+    }
     return restored;
 }
 
@@ -282,6 +307,14 @@ function createStreamCursorCli(cursorSessionState: CursorSessionState) {
                     stream.push({ type: "text_end", contentIndex, content: block.text, partial: output });
                 };
 
+                let estimatedInputTokens = 0;
+                let estimatedOutputTokens = 0;
+
+                const addEstimatedOutputTokens = (delta: string) => {
+                    estimatedOutputTokens += estimateTextTokens(delta);
+                    updateEstimatedUsage(output, estimatedInputTokens, estimatedOutputTokens);
+                };
+
                 const closeNativeThinkingBlock = () => {
                     if (nativeThinkingIndex < 0) return;
                     const contentIndex = nativeThinkingIndex;
@@ -304,6 +337,7 @@ function createStreamCursorCli(cursorSessionState: CursorSessionState) {
                     const block = output.content[nativeTextIndex];
                     if (block.type !== "text") return;
                     block.text += delta;
+                    addEstimatedOutputTokens(delta);
                     stream.push({ type: "text_delta", contentIndex: nativeTextIndex, delta, partial: output });
                 };
 
@@ -323,6 +357,7 @@ function createStreamCursorCli(cursorSessionState: CursorSessionState) {
                     const block = output.content[nativeThinkingIndex];
                     if (block.type !== "thinking") return;
                     block.thinking += delta;
+                    addEstimatedOutputTokens(delta);
                     stream.push({
                         type: "thinking_delta",
                         contentIndex: nativeThinkingIndex,
@@ -343,11 +378,13 @@ function createStreamCursorCli(cursorSessionState: CursorSessionState) {
                             name: tool.toolName,
                             arguments: tool.args,
                         });
+                        const serializedArgs = JSON.stringify(tool.args);
+                        addEstimatedOutputTokens(`${tool.toolName} ${serializedArgs}`);
                         stream.push({ type: "toolcall_start", contentIndex, partial: output });
                         stream.push({
                             type: "toolcall_delta",
                             contentIndex,
-                            delta: JSON.stringify(tool.args),
+                            delta: serializedArgs,
                             partial: output,
                         });
                         const block = output.content[contentIndex];
@@ -359,6 +396,8 @@ function createStreamCursorCli(cursorSessionState: CursorSessionState) {
                     }
                     output.stopReason = "toolUse";
                     setTiming();
+                    updateEstimatedUsage(output, estimatedInputTokens, estimatedOutputTokens);
+                    cursorSessionState.estimatedContextTokens = output.usage.totalTokens;
                     stream.push({ type: "done", reason: "toolUse", message: output });
                     stream.end();
                 };
@@ -389,6 +428,7 @@ function createStreamCursorCli(cursorSessionState: CursorSessionState) {
                             output.stopReason = "error";
                             output.errorMessage = event.message;
                             setTiming();
+                            updateEstimatedUsage(output, estimatedInputTokens, estimatedOutputTokens);
                             disposeCursorNativeRun(run);
                             stream.push({ type: "error", reason: "error", error: output });
                             stream.end();
@@ -398,6 +438,8 @@ function createStreamCursorCli(cursorSessionState: CursorSessionState) {
                             closeNativeThinkingBlock();
                             closeNativeTextBlock();
                             setTiming();
+                            updateEstimatedUsage(output, estimatedInputTokens, estimatedOutputTokens);
+                            cursorSessionState.estimatedContextTokens = output.usage.totalTokens;
                             disposeCursorNativeRun(run);
                             stream.push({ type: "done", reason: "stop", message: output });
                             stream.end();
@@ -410,6 +452,8 @@ function createStreamCursorCli(cursorSessionState: CursorSessionState) {
                 if (pendingReplayId) {
                     const run = getPendingCursorNativeRun(pendingReplayId);
                     if (run) {
+                        estimatedInputTokens = estimateContextTokens(context);
+                        updateEstimatedUsage(output, estimatedInputTokens, estimatedOutputTokens);
                         await drainNativeRun(run);
                         return;
                     }
@@ -421,6 +465,14 @@ function createStreamCursorCli(cursorSessionState: CursorSessionState) {
                 const prompt = cursorSessionState.current
                     ? await serializeLatestUserPrompt(context, promptTempFiles)
                     : await serializeContext(context, promptTempFiles);
+                if (cursorSessionState.current && cursorSessionState.estimatedContextTokens !== undefined) {
+                    estimatedInputTokens = cursorSessionState.estimatedContextTokens + estimateTextTokens(prompt);
+                } else if (cursorSessionState.current) {
+                    estimatedInputTokens = estimateContextTokens(context);
+                } else {
+                    estimatedInputTokens = estimateTextTokens(prompt);
+                }
+                updateEstimatedUsage(output, estimatedInputTokens, estimatedOutputTokens);
                 const reasoningLevel = (options as { reasoning?: string })?.reasoning;
                 const cliModelId = toCursorId(model.id, reasoningLevel);
 
@@ -479,6 +531,7 @@ export default async function (pi: ExtensionAPI) {
         current: undefined,
         persisted: null,
         pending: undefined,
+        estimatedContextTokens: undefined,
     };
 
     pi.on("session_start", async (event, ctx) => {
@@ -486,6 +539,7 @@ export default async function (pi: ExtensionAPI) {
         if ((event.reason === "new" || event.reason === "fork") && restored) {
             cursorSessionState.current = undefined;
             cursorSessionState.pending = undefined;
+            cursorSessionState.estimatedContextTokens = undefined;
             persistCursorSessionId(pi, cursorSessionState, undefined);
         }
     });
