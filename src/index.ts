@@ -12,11 +12,9 @@
  *   CURSOR_API_KEY      API key for Cursor (used by the agent subprocess if set)
  */
 
-import { spawn } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createInterface } from "node:readline";
 import type {
     Api,
     AssistantMessage,
@@ -26,12 +24,27 @@ import type {
     Model,
     SimpleStreamOptions,
     TextContent,
-    ThinkingContent,
 } from "@earendil-works/pi-ai";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import {
+    type CursorNativeLiveRun,
+    disposeCursorNativeRun,
+    getCursorAgentPath,
+    getCursorNativeQueuedEventCount,
+    getPendingCursorNativeReplayId,
+    getPendingCursorNativeRun,
+    peekCursorNativeQueuedEvent,
+    startCursorNativeRun,
+    takeCursorNativeQueuedEvent,
+    waitForCursorNativeRunProgress,
+} from "./cursor-process.js";
 import { runAgentModels, STATIC_MODELS, toCursorId, toProviderModels } from "./models.js";
-import { type CursorToolCallPayload, renderCompletedToolCall, setRendererTheme } from "./renderer.js";
+import {
+    type CursorNativeToolDisplayItem,
+    recordCursorNativeToolDisplay,
+    registerCursorNativeToolDisplay,
+} from "./native-tool-display.js";
 
 // ---------------------------------------------------------------------------
 // Prompt serialisation
@@ -42,11 +55,6 @@ import { type CursorToolCallPayload, renderCompletedToolCall, setRendererTheme }
 // ---------------------------------------------------------------------------
 
 const CURSOR_SESSION_ENTRY_TYPE = "cursor-cli-session";
-const DEFAULT_CURSOR_AGENT_PATH = "agent";
-
-function getCursorAgentPath(): string {
-    return process.env.CURSOR_AGENT_PATH ?? process.env.AGENT_PATH ?? DEFAULT_CURSOR_AGENT_PATH;
-}
 
 interface CursorSessionEntryData {
     cursorSessionId: string | null;
@@ -209,65 +217,6 @@ function syncCursorSessionState(ctx: ExtensionContext, state: CursorSessionState
 }
 
 // ---------------------------------------------------------------------------
-// NDJSON event types — Cursor CLI stream-json shape
-// ---------------------------------------------------------------------------
-
-interface CursorAssistantEvent {
-    type: "assistant";
-    message: {
-        role: "assistant";
-        content: Array<{ type: "text"; text: string }>;
-    };
-    session_id: string;
-}
-
-interface CursorToolCallEvent {
-    type: "tool_call";
-    subtype: "started" | "completed";
-    /** The outer object has exactly one key: the tool name (e.g. "shellToolCall"). */
-    tool_call: Record<string, CursorToolCallPayload>;
-}
-
-interface CursorThinkingEvent {
-    type: "thinking";
-    subtype: "delta" | "completed";
-    text?: string;
-}
-
-interface CursorResultEvent {
-    type: "result";
-    subtype: string;
-    duration_ms: number;
-}
-
-interface CursorEventBase {
-    type: string;
-    session_id?: string;
-}
-
-type CursorStreamEvent =
-    | CursorAssistantEvent
-    | CursorThinkingEvent
-    | CursorToolCallEvent
-    | CursorResultEvent
-    | CursorEventBase;
-
-function parseLine(line: string): CursorStreamEvent | null {
-    const trimmed = line.trim();
-    if (!trimmed) return null;
-    try {
-        return JSON.parse(trimmed) as CursorStreamEvent;
-    } catch {
-        return null;
-    }
-}
-
-function getCursorSessionId(event: CursorStreamEvent): string | undefined {
-    const sessionId = (event as CursorEventBase).session_id;
-    return typeof sessionId === "string" && sessionId.trim() ? sessionId : undefined;
-}
-
-// ---------------------------------------------------------------------------
 // streamSimple — the custom backend for the cursor provider
 // ---------------------------------------------------------------------------
 
@@ -321,6 +270,151 @@ function createStreamCursorCli(cursorSessionState: CursorSessionState) {
             };
 
             try {
+                let nativeTextIndex = -1;
+                let nativeThinkingIndex = -1;
+
+                const closeNativeTextBlock = () => {
+                    if (nativeTextIndex < 0) return;
+                    const contentIndex = nativeTextIndex;
+                    nativeTextIndex = -1;
+                    const block = output.content[contentIndex];
+                    if (block.type !== "text") return;
+                    stream.push({ type: "text_end", contentIndex, content: block.text, partial: output });
+                };
+
+                const closeNativeThinkingBlock = () => {
+                    if (nativeThinkingIndex < 0) return;
+                    const contentIndex = nativeThinkingIndex;
+                    nativeThinkingIndex = -1;
+                    const block = output.content[contentIndex];
+                    if (block.type === "thinking") {
+                        stream.push({ type: "thinking_end", contentIndex, content: block.thinking, partial: output });
+                    }
+                };
+
+                const appendNativeTextDelta = (delta: string) => {
+                    if (!delta) return;
+                    if (firstTokenTime === undefined) firstTokenTime = Date.now();
+                    closeNativeThinkingBlock();
+                    if (nativeTextIndex < 0) {
+                        nativeTextIndex = output.content.length;
+                        output.content.push({ type: "text", text: "" });
+                        stream.push({ type: "text_start", contentIndex: nativeTextIndex, partial: output });
+                    }
+                    const block = output.content[nativeTextIndex];
+                    if (block.type !== "text") return;
+                    block.text += delta;
+                    stream.push({ type: "text_delta", contentIndex: nativeTextIndex, delta, partial: output });
+                };
+
+                const appendNativeThinkingDelta = (delta: string) => {
+                    if (!delta) return;
+                    if (firstTokenTime === undefined) firstTokenTime = Date.now();
+                    closeNativeTextBlock();
+                    if (nativeThinkingIndex < 0) {
+                        nativeThinkingIndex = output.content.length;
+                        output.content.push({ type: "thinking", thinking: "" });
+                        stream.push({
+                            type: "thinking_start",
+                            contentIndex: nativeThinkingIndex,
+                            partial: output,
+                        });
+                    }
+                    const block = output.content[nativeThinkingIndex];
+                    if (block.type !== "thinking") return;
+                    block.thinking += delta;
+                    stream.push({
+                        type: "thinking_delta",
+                        contentIndex: nativeThinkingIndex,
+                        delta,
+                        partial: output,
+                    });
+                };
+
+                const emitNativeToolUseTurn = (run: CursorNativeLiveRun, tools: CursorNativeToolDisplayItem[]) => {
+                    closeNativeThinkingBlock();
+                    closeNativeTextBlock();
+                    const shouldTerminate = run.done && getCursorNativeQueuedEventCount(run) === 0;
+                    for (const tool of tools) {
+                        const contentIndex = output.content.length;
+                        output.content.push({
+                            type: "toolCall",
+                            id: tool.id,
+                            name: tool.toolName,
+                            arguments: tool.args,
+                        });
+                        stream.push({ type: "toolcall_start", contentIndex, partial: output });
+                        stream.push({
+                            type: "toolcall_delta",
+                            contentIndex,
+                            delta: JSON.stringify(tool.args),
+                            partial: output,
+                        });
+                        const block = output.content[contentIndex];
+                        if (block.type === "toolCall")
+                            stream.push({ type: "toolcall_end", contentIndex, toolCall: block, partial: output });
+                        if (recordCursorNativeToolDisplay({ ...tool, terminate: shouldTerminate })) {
+                            run.recordedToolDisplayIds.push(tool.id);
+                        }
+                    }
+                    output.stopReason = "toolUse";
+                    setTiming();
+                    stream.push({ type: "done", reason: "toolUse", message: output });
+                    stream.end();
+                };
+
+                const drainNativeRun = async (run: CursorNativeLiveRun) => {
+                    stream.push({ type: "start", partial: output });
+                    while (true) {
+                        await waitForCursorNativeRunProgress(run, options?.signal);
+
+                        const tools: CursorNativeToolDisplayItem[] = [];
+                        while (peekCursorNativeQueuedEvent(run)?.type === "tool") {
+                            const event = takeCursorNativeQueuedEvent(run);
+                            if (event?.type === "tool") tools.push(event.tool);
+                        }
+                        if (tools.length > 0) {
+                            emitNativeToolUseTurn(run, tools);
+                            return;
+                        }
+
+                        const event = takeCursorNativeQueuedEvent(run);
+                        if (!event) continue;
+                        if (event.type === "text-delta") appendNativeTextDelta(event.text);
+                        if (event.type === "thinking-delta") appendNativeThinkingDelta(event.text);
+                        if (event.type === "thinking-completed") closeNativeThinkingBlock();
+                        if (event.type === "error") {
+                            closeNativeThinkingBlock();
+                            closeNativeTextBlock();
+                            output.stopReason = "error";
+                            output.errorMessage = event.message;
+                            setTiming();
+                            disposeCursorNativeRun(run);
+                            stream.push({ type: "error", reason: "error", error: output });
+                            stream.end();
+                            return;
+                        }
+                        if (event.type === "done") {
+                            closeNativeThinkingBlock();
+                            closeNativeTextBlock();
+                            setTiming();
+                            disposeCursorNativeRun(run);
+                            stream.push({ type: "done", reason: "stop", message: output });
+                            stream.end();
+                            return;
+                        }
+                    }
+                };
+
+                const pendingReplayId = getPendingCursorNativeReplayId(context);
+                if (pendingReplayId) {
+                    const run = getPendingCursorNativeRun(pendingReplayId);
+                    if (run) {
+                        await drainNativeRun(run);
+                        return;
+                    }
+                }
+
                 const agentPath = getCursorAgentPath();
 
                 const workspacePath = process.cwd();
@@ -342,254 +436,18 @@ function createStreamCursorCli(cursorSessionState: CursorSessionState) {
                     args.unshift("--api-key", process.env.CURSOR_API_KEY);
                 }
 
-                stream.push({ type: "start", partial: output });
-
-                const child = spawn(agentPath, args, {
-                    stdio: ["ignore", "pipe", "pipe"],
-                    env: process.env,
-                });
-
-                const onAbort = () => {
-                    child.kill("SIGTERM");
-                };
-                options?.signal?.addEventListener("abort", onAbort, {
-                    once: true,
-                });
-
-                const stderrChunks: string[] = [];
-                child.stderr?.on("data", (chunk: Buffer) => {
-                    stderrChunks.push(chunk.toString());
-                });
-
-                let accumulatedText = "";
-                let openBlock:
-                    | { type: "text"; block: TextContent; index: number }
-                    | {
-                          type: "thinking";
-                          block: ThinkingContent;
-                          index: number;
-                      }
-                    | null = null;
-
-                const closeOpenBlock = () => {
-                    if (!openBlock) return;
-
-                    if (openBlock.type === "text") {
-                        stream.push({
-                            type: "text_end",
-                            contentIndex: openBlock.index,
-                            content: openBlock.block.text,
-                            partial: output,
-                        });
-                    } else {
-                        stream.push({
-                            type: "thinking_end",
-                            contentIndex: openBlock.index,
-                            content: openBlock.block.thinking,
-                            partial: output,
-                        });
-                    }
-
-                    openBlock = null;
-                };
-
-                const ensureTextBlock = (): {
-                    block: TextContent;
-                    index: number;
-                } => {
-                    if (openBlock?.type === "text") {
-                        return openBlock;
-                    }
-
-                    closeOpenBlock();
-
-                    const block: TextContent = { type: "text", text: "" };
-                    output.content.push(block);
-                    const index = output.content.length - 1;
-                    openBlock = { type: "text", block, index };
-                    stream.push({
-                        type: "text_start",
-                        contentIndex: index,
-                        partial: output,
-                    });
-
-                    return { block, index };
-                };
-
-                const ensureThinkingBlock = (): {
-                    block: ThinkingContent;
-                    index: number;
-                } => {
-                    if (openBlock?.type === "thinking") {
-                        return openBlock;
-                    }
-
-                    closeOpenBlock();
-
-                    const block: ThinkingContent = {
-                        type: "thinking",
-                        thinking: "",
-                    };
-                    output.content.push(block);
-                    const index = output.content.length - 1;
-                    openBlock = { type: "thinking", block, index };
-                    stream.push({
-                        type: "thinking_start",
-                        contentIndex: index,
-                        partial: output,
-                    });
-
-                    return { block, index };
-                };
-
-                const appendTextDelta = (delta: string) => {
-                    if (!delta) return;
-                    if (firstTokenTime === undefined) firstTokenTime = Date.now();
-                    const { block, index } = ensureTextBlock();
-                    block.text += delta;
-                    accumulatedText += delta;
-                    stream.push({
-                        type: "text_delta",
-                        contentIndex: index,
-                        delta,
-                        partial: output,
-                    });
-                };
-
-                const appendThinkingDelta = (delta: string) => {
-                    if (!delta) return;
-                    if (firstTokenTime === undefined) firstTokenTime = Date.now();
-                    const { block, index } = ensureThinkingBlock();
-                    block.thinking += delta;
-                    stream.push({
-                        type: "thinking_delta",
-                        contentIndex: index,
-                        delta,
-                        partial: output,
-                    });
-                };
-
-                const stdout = child.stdout;
-                if (!stdout) {
-                    throw new Error("Child process has no stdout (expected pipe)");
-                }
-                const rl = createInterface({
-                    input: stdout,
-                    crlfDelay: Infinity,
-                });
-
-                rl.on("line", (line: string) => {
-                    const event = parseLine(line);
-                    if (!event) return;
-
-                    const cursorSessionId = getCursorSessionId(event);
-                    if (cursorSessionId) {
+                const run = startCursorNativeRun({
+                    agentPath,
+                    args,
+                    signal: options?.signal,
+                    onSessionId: (cursorSessionId) => {
                         cursorSessionState.current = cursorSessionId;
                         if (cursorSessionState.persisted !== cursorSessionId) {
                             cursorSessionState.pending = cursorSessionId;
                         }
-                    }
-
-                    if (event.type === "assistant") {
-                        const ae = event as CursorAssistantEvent;
-                        for (const block of ae.message.content) {
-                            if (block.type !== "text") continue;
-                            if (!block.text.trim()) continue;
-                            appendTextDelta(block.text);
-                        }
-                        return;
-                    }
-
-                    if (event.type === "thinking") {
-                        const te = event as CursorThinkingEvent;
-                        if (te.subtype === "delta") {
-                            appendThinkingDelta(te.text ?? "");
-                            return;
-                        }
-
-                        if (te.subtype === "completed") {
-                            if (openBlock?.type === "thinking") {
-                                closeOpenBlock();
-                            }
-                            return;
-                        }
-                    }
-
-                    // Pi supports structured toolcall_* events, but Cursor CLI's tool_call
-                    // stream is observational: by the time we receive it, Cursor has
-                    // already executed the tool. Emitting Pi tool calls here would cause
-                    // Pi to execute the same tool again and continue another agent turn.
-                    if (event.type === "tool_call") {
-                        const tce = event as CursorToolCallEvent;
-                        const cliKey = Object.keys(tce.tool_call)[0];
-                        if (!cliKey) return;
-                        const payload = tce.tool_call[cliKey];
-                        if (!payload) return;
-
-                        if (tce.subtype === "completed") {
-                            appendTextDelta(renderCompletedToolCall(cliKey, payload));
-                        }
-                    }
+                    },
                 });
-
-                await new Promise<void>((resolve) => {
-                    child.on("close", (code) => {
-                        options?.signal?.removeEventListener("abort", onAbort);
-
-                        closeOpenBlock();
-
-                        if (options?.signal?.aborted) {
-                            output.stopReason = "aborted";
-                            setTiming();
-                            stream.push({
-                                type: "error",
-                                reason: "aborted",
-                                error: output,
-                            });
-                            stream.end();
-                            resolve();
-                            return;
-                        }
-
-                        if (code !== 0 && !accumulatedText) {
-                            const stderr = stderrChunks.join("").trim();
-                            output.stopReason = "error";
-                            output.errorMessage = stderr || `Cursor CLI exited with code ${code}`;
-                            setTiming();
-                            stream.push({
-                                type: "error",
-                                reason: "error",
-                                error: output,
-                            });
-                            stream.end();
-                            resolve();
-                            return;
-                        }
-
-                        setTiming();
-                        stream.push({
-                            type: "done",
-                            reason: "stop",
-                            message: output,
-                        });
-                        stream.end();
-                        resolve();
-                    });
-
-                    child.on("error", (err) => {
-                        options?.signal?.removeEventListener("abort", onAbort);
-                        output.stopReason = "error";
-                        output.errorMessage = err.message;
-                        setTiming();
-                        stream.push({
-                            type: "error",
-                            reason: "error",
-                            error: output,
-                        });
-                        stream.end();
-                        resolve();
-                    });
-                });
+                await drainNativeRun(run);
             } catch (error) {
                 output.stopReason = options?.signal?.aborted ? "aborted" : "error";
                 output.errorMessage = error instanceof Error ? error.message : String(error);
@@ -614,6 +472,8 @@ function createStreamCursorCli(cursorSessionState: CursorSessionState) {
 // ---------------------------------------------------------------------------
 
 export default async function (pi: ExtensionAPI) {
+    registerCursorNativeToolDisplay(pi);
+
     const agentPath = getCursorAgentPath();
     const cursorSessionState: CursorSessionState = {
         current: undefined,
@@ -622,8 +482,6 @@ export default async function (pi: ExtensionAPI) {
     };
 
     pi.on("session_start", async (event, ctx) => {
-        setRendererTheme(ctx.ui.theme);
-
         const restored = syncCursorSessionState(ctx, cursorSessionState);
         if ((event.reason === "new" || event.reason === "fork") && restored) {
             cursorSessionState.current = undefined;

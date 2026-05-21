@@ -1,5 +1,3 @@
-import type { Theme } from "@earendil-works/pi-coding-agent";
-
 export interface CursorToolCallPayload {
     args: Record<string, unknown>;
     result?: Record<string, unknown> & {
@@ -9,7 +7,21 @@ export interface CursorToolCallPayload {
     };
 }
 
-type ThemeLike = Pick<Theme, "bg" | "bold" | "fg">;
+export interface CursorPiToolDisplay {
+    toolName: string;
+    args: Record<string, unknown>;
+    result: {
+        content: Array<{ type: "text"; text: string }>;
+        details?: unknown;
+    };
+    isError: boolean;
+}
+
+interface ThemeLike {
+    bg(color: string, text: string): string;
+    bold(text: string): string;
+    fg(color: string, text: string): string;
+}
 
 const FALLBACK_THEME: ThemeLike = {
     bg: (_color, text) => text,
@@ -33,11 +45,7 @@ const TOOL_NAME_MAP: Record<string, string> = {
     webSearchToolCall: "webSearch",
 };
 
-let theme: ThemeLike = FALLBACK_THEME;
-
-export function setRendererTheme(nextTheme?: ThemeLike): void {
-    theme = nextTheme ?? FALLBACK_THEME;
-}
+const theme: ThemeLike = FALLBACK_THEME;
 
 export function toPiToolName(cliKey: string): string {
     return TOOL_NAME_MAP[cliKey] ?? cliKey.replace(/ToolCall$/, "");
@@ -285,38 +293,19 @@ function formatToolResultLines(
     toolName: string,
     payload: CursorToolCallPayload,
 ): { isError: boolean; lines: string[] } {
-    const result = payload.result;
-    const fileNotFound = getRecord(result?.fileNotFound);
-    if (fileNotFound) {
-        const path = getString(fileNotFound.path);
-        return {
-            isError: true,
-            lines: [theme.fg("error", path ? `File not found: ${path}` : "File not found.")],
-        };
+    const error = getResultError(payload);
+    if (error) {
+        return { isError: true, lines: [theme.fg("error", error)] };
     }
 
-    const rejectedReason = payload.result?.rejected?.reason;
-    if (rejectedReason) {
-        return { isError: true, lines: [theme.fg("error", rejectedReason)] };
-    }
-
-    const errorMessage = payload.result?.error?.message;
-    if (errorMessage) {
-        return { isError: true, lines: [theme.fg("error", errorMessage)] };
-    }
-
-    const success = payload.result?.success;
+    const success = getResultSuccess(payload);
     if (!success) {
         return { isError: false, lines: [] };
     }
 
     if (toolName === "bash") {
         const exitCode = typeof success.exitCode === "number" ? success.exitCode : undefined;
-        const output =
-            getString(success.interleavedOutput) ??
-            [getString(success.stdout), getString(success.stderr)]
-                .filter((value): value is string => Boolean(value))
-                .join("");
+        const output = getBashOutput(success);
         const { lines, remaining } = stylePreviewLines(output.split("\n"), 5);
         if (exitCode != null && exitCode !== 0) {
             lines.unshift(theme.fg("error", `[exit ${exitCode}]`));
@@ -380,7 +369,6 @@ function renderToolBlock(title: string, bodyLines: string[] = []): string {
     blockLines.push(`  ${title}`);
     let hasBody = false;
     if (bodyLines.length > 0) {
-        // blockLines.push(""); // separator between title and body
         for (const line of bodyLines) {
             if (line.length === 0) {
                 continue;
@@ -403,4 +391,130 @@ export function renderCompletedToolCall(cliKey: string, payload: CursorToolCallP
     const title = formatToolCallTitle(toolName, payload.args ?? {});
     const { lines } = formatToolResultLines(toolName, payload);
     return renderToolBlock(title, lines);
+}
+
+function textToolResult(text: string, details?: unknown): CursorPiToolDisplay["result"] {
+    return { content: [{ type: "text", text }], details };
+}
+
+function getResultSuccess(payload: CursorToolCallPayload): Record<string, unknown> | undefined {
+    return getRecord(payload.result?.success);
+}
+
+function getResultError(payload: CursorToolCallPayload): string | undefined {
+    const fileNotFound = getRecord(payload.result?.fileNotFound);
+    if (fileNotFound) {
+        const path = getString(fileNotFound.path);
+        return path ? `File not found: ${path}` : "File not found.";
+    }
+    return payload.result?.rejected?.reason ?? payload.result?.error?.message;
+}
+
+function getBashOutput(success: Record<string, unknown> | undefined): string {
+    return (
+        getString(success?.interleavedOutput) ??
+        [getString(success?.stdout), getString(success?.stderr)]
+            .filter((value): value is string => Boolean(value))
+            .join("")
+    );
+}
+
+function buildBashDisplay(payload: CursorToolCallPayload): CursorPiToolDisplay {
+    const success = getResultSuccess(payload);
+    const exitCode = typeof success?.exitCode === "number" ? success.exitCode : undefined;
+    const output = getBashOutput(success);
+    const error = getResultError(payload);
+    return {
+        toolName: "bash",
+        args: payload.args ?? {},
+        result: textToolResult(error ?? (output.trimEnd() || "(no output)")),
+        isError: Boolean(error) || (exitCode != null && exitCode !== 0),
+    };
+}
+
+function buildReadDisplay(payload: CursorToolCallPayload): CursorPiToolDisplay {
+    const success = getResultSuccess(payload);
+    const error = getResultError(payload);
+    const content = getString(success?.content) ?? (success?.isEmpty === true ? "File is empty." : "");
+    return {
+        toolName: "read",
+        args: payload.args ?? {},
+        result: textToolResult(error ?? content),
+        isError: Boolean(error),
+    };
+}
+
+function buildEditDisplay(payload: CursorToolCallPayload): CursorPiToolDisplay {
+    const success = getResultSuccess(payload);
+    const error = getResultError(payload);
+    const diffString = getString(success?.diffString);
+    const linesAdded = typeof success?.linesAdded === "number" ? success.linesAdded : undefined;
+    const linesRemoved = typeof success?.linesRemoved === "number" ? success.linesRemoved : undefined;
+    const stats = [
+        linesAdded !== undefined ? `+${linesAdded}` : undefined,
+        linesRemoved !== undefined ? `-${linesRemoved}` : undefined,
+    ]
+        .filter(Boolean)
+        .join(" ");
+    const body = [stats, diffString].filter((part): part is string => Boolean(part)).join("\n\n");
+    const path = getString(payload.args?.path);
+    return {
+        toolName: "cursor_edit",
+        args: payload.args ?? {},
+        result: textToolResult(error ?? (body || "edit completed"), {
+            cursorToolName: "edit",
+            path,
+            linesAdded,
+            linesRemoved,
+            diffString,
+        }),
+        isError: Boolean(error),
+    };
+}
+
+function buildWriteDisplay(payload: CursorToolCallPayload): CursorPiToolDisplay {
+    const success = getResultSuccess(payload);
+    const error = getResultError(payload);
+    const linesCreated = typeof success?.linesCreated === "number" ? success.linesCreated : undefined;
+    const fileSize = typeof success?.fileSize === "number" ? success.fileSize : undefined;
+    const parts = [
+        linesCreated !== undefined ? `Created ${linesCreated} lines` : undefined,
+        fileSize !== undefined ? `File size: ${fileSize} bytes` : undefined,
+        getString(success?.fileContentAfterWrite),
+    ].filter((part): part is string => Boolean(part));
+    const path = getString(payload.args?.path);
+    return {
+        toolName: "cursor_write",
+        args: payload.args ?? {},
+        result: textToolResult(error ?? (parts.join("\n\n") || "write completed"), {
+            cursorToolName: "write",
+            path,
+            linesCreated,
+            fileSize,
+        }),
+        isError: Boolean(error),
+    };
+}
+
+export function buildCursorPiToolDisplay(cliKey: string, payload: CursorToolCallPayload): CursorPiToolDisplay {
+    const toolName = toPiToolName(cliKey);
+
+    if (toolName === "bash") return buildBashDisplay(payload);
+    if (toolName === "read") return buildReadDisplay(payload);
+    if (toolName === "edit") return buildEditDisplay(payload);
+    if (toolName === "write") return buildWriteDisplay(payload);
+
+    const error = getResultError(payload);
+    const { lines } = formatToolResultLines(toolName, payload);
+    const mappedToolName = toolName === "glob" ? "bash" : toolName;
+    const args =
+        mappedToolName === "bash" && toolName === "glob"
+            ? { command: formatToolCallTitle(toolName, payload.args ?? {}) }
+            : (payload.args ?? {});
+    return {
+        toolName: mappedToolName,
+        args,
+        result: textToolResult(error ?? (lines.join("\n") || "tool completed")),
+        isError: Boolean(error),
+    };
 }
