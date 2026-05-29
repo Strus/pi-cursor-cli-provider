@@ -566,7 +566,7 @@ export default async function (pi: ExtensionAPI) {
 
     pi.registerProvider("cursor", {
         baseUrl: "cli://cursor-agent",
-        apiKey: "CURSOR_API_KEY",
+        apiKey: "$CURSOR_API_KEY",
         api: "cursor-cli" as Api,
         models: toProviderModels(modelDefs),
         streamSimple: createStreamCursorCli(cursorSessionState),
