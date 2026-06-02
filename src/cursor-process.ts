@@ -59,6 +59,7 @@ export type CursorNativeQueuedEvent =
     | { type: "thinking-delta"; text: string }
     | { type: "thinking-completed" }
     | { type: "text-delta"; text: string }
+    | { type: "tool-start"; tool: CursorNativeToolDisplayItem }
     | { type: "tool"; tool: CursorNativeToolDisplayItem }
     | { type: "done" }
     | { type: "error"; message: string };
@@ -68,6 +69,7 @@ export interface CursorNativeLiveRun {
     pendingEvents: CursorNativeQueuedEvent[];
     pendingEventIndex: number;
     recordedToolDisplayIds: string[];
+    startedToolIds: Map<string, string[]>;
     waiters: Set<() => void>;
     done: boolean;
     errorMessage?: string;
@@ -104,6 +106,10 @@ export function getCursorSessionId(event: CursorStreamEvent): string | undefined
 function createCursorNativeReplayId(): string {
     cursorNativeReplayCounter += 1;
     return `cursor-cli-replay-${Date.now()}-${cursorNativeReplayCounter}`;
+}
+
+function getCursorNativeToolStartKey(cliKey: string, payload: CursorToolCallPayload): string {
+    return `${cliKey}:${JSON.stringify(payload.args ?? {})}`;
 }
 
 function getCursorNativeReplayIdFromToolCallId(toolCallId: string): string | undefined {
@@ -186,6 +192,7 @@ export function startCursorNativeRun(options: StartCursorNativeRunOptions): Curs
         pendingEvents: [],
         pendingEventIndex: 0,
         recordedToolDisplayIds: [],
+        startedToolIds: new Map(),
         waiters: new Set(),
         done: false,
         toolCounter: 0,
@@ -255,19 +262,40 @@ export function startCursorNativeRun(options: StartCursorNativeRunOptions): Curs
 
         if (event.type === "tool_call") {
             const tce = event as CursorToolCallEvent;
-            if (tce.subtype !== "completed") return;
             const cliKey = Object.keys(tce.tool_call)[0];
             if (!cliKey) return;
             const payload = tce.tool_call[cliKey];
             if (!payload) return;
 
             const display = buildCursorPiToolDisplay(cliKey, payload);
+            if (tce.subtype === "started") {
+                if (!canRenderCursorToolNatively(display.toolName)) return;
+                const id = `${run.id}-tool-${++run.toolCounter}`;
+                const key = getCursorNativeToolStartKey(cliKey, payload);
+                const ids = run.startedToolIds.get(key) ?? [];
+                ids.push(id);
+                run.startedToolIds.set(key, ids);
+                queueCursorNativeEvent(run, {
+                    type: "tool-start",
+                    tool: {
+                        ...display,
+                        id,
+                    },
+                });
+                return;
+            }
+
+            if (tce.subtype !== "completed") return;
             if (canRenderCursorToolNatively(display.toolName)) {
+                const key = getCursorNativeToolStartKey(cliKey, payload);
+                const ids = run.startedToolIds.get(key);
+                const startedId = ids?.shift();
+                if (ids && ids.length === 0) run.startedToolIds.delete(key);
                 queueCursorNativeEvent(run, {
                     type: "tool",
                     tool: {
                         ...display,
-                        id: `${run.id}-tool-${++run.toolCounter}`,
+                        id: startedId ?? `${run.id}-tool-${++run.toolCounter}`,
                     },
                 });
             } else {

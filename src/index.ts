@@ -366,30 +366,43 @@ function createStreamCursorCli(cursorSessionState: CursorSessionState) {
                     });
                 };
 
+                const nativeToolContentIndexes = new Map<string, number>();
+
+                const appendNativeToolStart = (tool: CursorNativeToolDisplayItem) => {
+                    if (nativeToolContentIndexes.has(tool.id)) return;
+                    closeNativeThinkingBlock();
+                    closeNativeTextBlock();
+                    const contentIndex = output.content.length;
+                    output.content.push({
+                        type: "toolCall",
+                        id: tool.id,
+                        name: tool.toolName,
+                        arguments: tool.args,
+                    });
+                    nativeToolContentIndexes.set(tool.id, contentIndex);
+                    const serializedArgs = JSON.stringify(tool.args);
+                    addEstimatedOutputTokens(`${tool.toolName} ${serializedArgs}`);
+                    stream.push({ type: "toolcall_start", contentIndex, partial: output });
+                    stream.push({
+                        type: "toolcall_delta",
+                        contentIndex,
+                        delta: serializedArgs,
+                        partial: output,
+                    });
+                };
+
                 const emitNativeToolUseTurn = (run: CursorNativeLiveRun, tools: CursorNativeToolDisplayItem[]) => {
                     closeNativeThinkingBlock();
                     closeNativeTextBlock();
                     const shouldTerminate = run.done && getCursorNativeQueuedEventCount(run) === 0;
                     for (const tool of tools) {
-                        const contentIndex = output.content.length;
-                        output.content.push({
-                            type: "toolCall",
-                            id: tool.id,
-                            name: tool.toolName,
-                            arguments: tool.args,
-                        });
-                        const serializedArgs = JSON.stringify(tool.args);
-                        addEstimatedOutputTokens(`${tool.toolName} ${serializedArgs}`);
-                        stream.push({ type: "toolcall_start", contentIndex, partial: output });
-                        stream.push({
-                            type: "toolcall_delta",
-                            contentIndex,
-                            delta: serializedArgs,
-                            partial: output,
-                        });
+                        appendNativeToolStart(tool);
+                        const contentIndex = nativeToolContentIndexes.get(tool.id);
+                        if (contentIndex === undefined) continue;
                         const block = output.content[contentIndex];
                         if (block.type === "toolCall")
                             stream.push({ type: "toolcall_end", contentIndex, toolCall: block, partial: output });
+                        nativeToolContentIndexes.delete(tool.id);
                         if (recordCursorNativeToolDisplay({ ...tool, terminate: shouldTerminate })) {
                             run.recordedToolDisplayIds.push(tool.id);
                         }
@@ -422,6 +435,7 @@ function createStreamCursorCli(cursorSessionState: CursorSessionState) {
                         if (event.type === "text-delta") appendNativeTextDelta(event.text);
                         if (event.type === "thinking-delta") appendNativeThinkingDelta(event.text);
                         if (event.type === "thinking-completed") closeNativeThinkingBlock();
+                        if (event.type === "tool-start") appendNativeToolStart(event.tool);
                         if (event.type === "error") {
                             closeNativeThinkingBlock();
                             closeNativeTextBlock();
