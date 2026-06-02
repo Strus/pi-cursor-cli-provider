@@ -1,5 +1,6 @@
 import {
     createBashToolDefinition,
+    createEditToolDefinition,
     createGrepToolDefinition,
     createLsToolDefinition,
     createReadToolDefinition,
@@ -10,7 +11,7 @@ import {
 import { Text } from "@earendil-works/pi-tui";
 import { type TSchema, Type } from "typebox";
 
-const NATIVE_CURSOR_TOOL_NAMES = ["read", "bash", "grep", "ls", "cursor_edit", "cursor_write"] as const;
+const NATIVE_CURSOR_TOOL_NAMES = ["read", "bash", "edit", "grep", "ls", "cursor_edit", "cursor_write"] as const;
 type NativeCursorToolName = (typeof NATIVE_CURSOR_TOOL_NAMES)[number];
 
 const NATIVE_CURSOR_TOOL_DISPLAY_ENV = "PI_CURSOR_NATIVE_TOOL_DISPLAY";
@@ -99,6 +100,7 @@ function wrapNativeCursorTool<TParams extends TSchema, TDetails, TState>(
 
 interface CursorReplayToolDetails {
     cursorToolName?: "edit" | "write";
+    suppressDisplay?: boolean;
     path?: string;
     linesAdded?: number;
     linesRemoved?: number;
@@ -182,6 +184,7 @@ function renderCursorReplayResult(
 ): Text {
     if (options.isPartial) return new Text(theme.fg("warning", "Replaying Cursor tool result..."), 0, 0);
     const details = asCursorReplayToolDetails(result.details);
+    if (details?.suppressDisplay === true) return new Text("", 0, 0);
     const content = result.content[0];
     const text = content?.type === "text" ? content.text : "";
     if (isError) return new Text(theme.fg("error", text.split("\n")[0] || "Cursor replay failed"), 0, 0);
@@ -227,9 +230,12 @@ function createCursorReplayOnlyToolDefinition(
         parameters: cursorReplayToolSchema,
         renderShell: "self",
         async execute() {
-            throw new Error(
-                `No recorded Cursor ${cursorToolName} result was available. This replay-only tool does not execute file mutations.`,
-            );
+            return {
+                content: [],
+                details: { cursorToolName, suppressDisplay: true },
+                isError: false,
+                terminate: true,
+            };
         },
         renderCall(args, theme, context) {
             return renderCursorReplayCall(toolName, args as Record<string, unknown>, theme, context.isPartial);
@@ -246,6 +252,10 @@ function createNativeCursorToolDefinition(
 ): ToolDefinition<TSchema, unknown, unknown> {
     if (toolName === "read") return createReadToolDefinition(cwd) as ToolDefinition<TSchema, unknown, unknown>;
     if (toolName === "bash") return createBashToolDefinition(cwd) as ToolDefinition<TSchema, unknown, unknown>;
+    if (toolName === "edit") {
+        const definition = createEditToolDefinition(cwd) as ToolDefinition<TSchema, unknown, unknown>;
+        return { ...definition, parameters: cursorReplayToolSchema };
+    }
     if (toolName === "grep") return createGrepToolDefinition(cwd) as ToolDefinition<TSchema, unknown, unknown>;
     if (toolName === "ls") return createLsToolDefinition(cwd) as ToolDefinition<TSchema, unknown, unknown>;
     return createCursorReplayOnlyToolDefinition(toolName) as ToolDefinition<TSchema, unknown, unknown>;

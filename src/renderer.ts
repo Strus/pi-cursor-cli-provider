@@ -15,6 +15,18 @@ export interface CursorPiToolDisplay {
         details?: unknown;
     };
     isError: boolean;
+    omitStartRender?: boolean;
+}
+
+interface PiEditToolDetails {
+    diff: string;
+    patch: string;
+    firstChangedLine?: number;
+}
+
+interface PiDisplayDiff {
+    diff: string;
+    firstChangedLine?: number;
 }
 
 interface ThemeLike {
@@ -289,6 +301,70 @@ function styleDiffLines(text: string, maxLines: number): { lines: string[]; rema
     };
 }
 
+function parseUnifiedDiffHunkHeader(line: string): { oldStart: number; newStart: number } | undefined {
+    const match = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
+    if (!match) return undefined;
+    return {
+        oldStart: Number(match[1]),
+        newStart: Number(match[2]),
+    };
+}
+
+function formatPiDiffLine(prefix: "+" | "-" | " ", lineNumber: number, content: string, width: number): string {
+    return `${prefix}${String(lineNumber).padStart(width, " ")} ${content}`;
+}
+
+function unifiedDiffToPiDisplayDiff(patch: string): PiDisplayDiff {
+    const output: string[] = [];
+    const lines = patch.split("\n");
+    const maxLineNumber =
+        lines.reduce((max, line) => {
+            const header = parseUnifiedDiffHunkHeader(line);
+            return header ? Math.max(max, header.oldStart, header.newStart) : max;
+        }, 1) || 1;
+    const width = String(maxLineNumber).length;
+    let oldLine = 1;
+    let newLine = 1;
+    let firstChangedLine: number | undefined;
+    let inHunk = false;
+
+    for (const line of lines) {
+        const header = parseUnifiedDiffHunkHeader(line);
+        if (header) {
+            oldLine = header.oldStart;
+            newLine = header.newStart;
+            inHunk = true;
+            continue;
+        }
+
+        if (!inHunk || line.startsWith("--- ") || line.startsWith("+++ ") || line === "\\ No newline at end of file") {
+            continue;
+        }
+
+        const prefix = line[0];
+        const content = line.slice(1);
+        if (prefix === " ") {
+            output.push(formatPiDiffLine(" ", oldLine, content, width));
+            oldLine += 1;
+            newLine += 1;
+        } else if (prefix === "-") {
+            if (firstChangedLine === undefined) firstChangedLine = newLine;
+            output.push(formatPiDiffLine("-", oldLine, content, width));
+            oldLine += 1;
+        } else if (prefix === "+") {
+            if (firstChangedLine === undefined) firstChangedLine = newLine;
+            output.push(formatPiDiffLine("+", newLine, content, width));
+            newLine += 1;
+        } else if (line === "") {
+            output.push(formatPiDiffLine(" ", oldLine, "", width));
+            oldLine += 1;
+            newLine += 1;
+        }
+    }
+
+    return { diff: output.length > 0 ? output.join("\n") : patch, firstChangedLine };
+}
+
 function formatToolResultLines(
     toolName: string,
     payload: CursorToolCallPayload,
@@ -458,17 +534,20 @@ function buildEditDisplay(payload: CursorToolCallPayload): CursorPiToolDisplay {
         .join(" ");
     const body = [stats, diffString].filter((part): part is string => Boolean(part)).join("\n\n");
     const path = getString(payload.args?.path);
+    const displayDiff = diffString ? unifiedDiffToPiDisplayDiff(diffString) : undefined;
+    const details: PiEditToolDetails | undefined = diffString
+        ? {
+              diff: displayDiff?.diff ?? diffString,
+              patch: diffString,
+              firstChangedLine: displayDiff?.firstChangedLine,
+          }
+        : undefined;
     return {
-        toolName: "cursor_edit",
+        toolName: "edit",
         args: payload.args ?? {},
-        result: textToolResult(error ?? (body || "edit completed"), {
-            cursorToolName: "edit",
-            path,
-            linesAdded,
-            linesRemoved,
-            diffString,
-        }),
+        result: textToolResult(error ?? (body || `Edited ${path ?? "file"}`), details),
         isError: Boolean(error),
+        omitStartRender: true,
     };
 }
 
@@ -516,5 +595,6 @@ export function buildCursorPiToolDisplay(cliKey: string, payload: CursorToolCall
         args,
         result: textToolResult(error ?? (lines.join("\n") || "tool completed")),
         isError: Boolean(error),
+        omitStartRender: toolName === "glob",
     };
 }

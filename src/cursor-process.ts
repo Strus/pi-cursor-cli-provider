@@ -269,7 +269,7 @@ export function startCursorNativeRun(options: StartCursorNativeRunOptions): Curs
 
             const display = buildCursorPiToolDisplay(cliKey, payload);
             if (tce.subtype === "started") {
-                if (!canRenderCursorToolNatively(display.toolName)) return;
+                if (display.omitStartRender || !canRenderCursorToolNatively(display.toolName)) return;
                 const id = `${run.id}-tool-${++run.toolCounter}`;
                 const key = getCursorNativeToolStartKey(cliKey, payload);
                 const ids = run.startedToolIds.get(key) ?? [];
