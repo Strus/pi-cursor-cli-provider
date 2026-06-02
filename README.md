@@ -35,7 +35,7 @@ does expose are available in only one variant - for example, only with "medium" 
 opinion, unusable.
 
 After all that, I stumbled upon [netandreus/pi-cursor-provider](https://github.com/netandreus/pi-cursor-provider). It
-worked, and most importantly, it used the legitimate Cursor CLI without any hacks. But it was not super polished—tool
+worked, and most importantly, it used the legitimate Cursor CLI without any hacks. But it was not super polished - tool
 call rendering was basically just raw text, all session history was sent as a prompt on every turn, images were not
 supported, etc. Still, the idea was cool, so I decided to build on top of it.
 
@@ -159,12 +159,6 @@ Ensure `~/.cursor/cli-config.json` allows the MCP tools. For example:
 `Mcp(pi-auto:*)` lets the agent use any tool from the `pi-auto` server.
 
 # Possible improvements
-
-### Better tool call rendering
-
-Tool calls are not natively rendered (see the [Limitations](#limitations) section). I could not find a way to mimic
-native rendering because Pi does not expose the terminal properties required to do this. The best solution would be to
-modify Pi so it can emit something like a "fake tool call" that Pi would only render, but not try to execute.
 
 ### Delegating tool calls to Pi
 
