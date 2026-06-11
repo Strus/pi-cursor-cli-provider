@@ -580,7 +580,12 @@ export default async function (pi: ExtensionAPI) {
 
     pi.registerProvider("cursor", {
         baseUrl: "cli://cursor-agent",
-        apiKey: "CURSOR_API_KEY",
+        // Auth is handled by the Cursor CLI itself (browser login via `agent login`
+        // or --api-key forwarded from CURSOR_API_KEY env var in the subprocess).
+        // A literal non-empty value is required here so pi considers the provider
+        // authenticated and shows its models. The value is never sent over the wire
+        // because this provider uses a custom streamSimple implementation.
+        apiKey: "cursor-cli",
         api: "cursor-cli" as Api,
         models: toProviderModels(modelDefs),
         streamSimple: createStreamCursorCli(cursorSessionState),
