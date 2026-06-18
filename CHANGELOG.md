@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.10.1]
+
+### Fixed
+
+- Fixed a bug when `CURSOR_API_KEY` env variable is not set (fix by [@theobarberbany](https://github.com/theobarberbany))
+
 ## [0.10.0]
 
 ### Added
@@ -9,7 +15,7 @@
 
 ### Fixed
 
-- Registered the provider API key as `"$CURSOR_API_KEY"` to avoid the deprecated legacy environment variable reference format.
+- Registered the provider API key as `"$CURSOR_API_KEY"` to avoid the deprecated legacy environment variable reference format. (fix by [@sergio-agosti](https://github.com/sergio-agosti))
 
 ## [0.9.3]
 
