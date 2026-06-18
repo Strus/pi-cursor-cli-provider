@@ -4,12 +4,11 @@
  * Routes Pi model requests through the Cursor Agent CLI (`agent`) so that any
  * active Cursor subscription can be used from inside Pi.
  *
- * Authentication is handled by the CLI itself — run `agent login` (or set the
- * CURSOR_API_KEY environment variable) before using this provider.
+ * Authentication is handled by the CLI itself — run `agent login` before using
+ * this provider.
  *
  * Configuration env vars:
  *   CURSOR_AGENT_PATH   Path to the Cursor Agent CLI binary (default: "agent")
- *   CURSOR_API_KEY      API key for Cursor (used by the agent subprocess if set)
  */
 
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -498,10 +497,6 @@ function createStreamCursorCli(cursorSessionState: CursorSessionState) {
 
                 args.push("--trust", "--workspace", workspacePath, prompt);
 
-                if (process.env.CURSOR_API_KEY) {
-                    args.unshift("--api-key", process.env.CURSOR_API_KEY);
-                }
-
                 const run = startCursorNativeRun({
                     agentPath,
                     args,
@@ -580,8 +575,7 @@ export default async function (pi: ExtensionAPI) {
 
     pi.registerProvider("cursor", {
         baseUrl: "cli://cursor-agent",
-        // Auth is handled by the Cursor CLI itself (browser login via `agent login`
-        // or --api-key forwarded from CURSOR_API_KEY env var in the subprocess).
+        // Auth is handled by the Cursor CLI itself (browser login via `agent login`).
         // A literal non-empty value is required here so pi considers the provider
         // authenticated and shows its models. The value is never sent over the wire
         // because this provider uses a custom streamSimple implementation.

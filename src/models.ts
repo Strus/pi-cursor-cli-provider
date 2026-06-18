@@ -1144,9 +1144,6 @@ function parseAgentModelsOutput(output: string): CursorModelDef[] {
 export function runAgentModels(agentPath: string): Promise<CursorModelDef[]> {
     return new Promise((resolve, reject) => {
         const args = ["models"];
-        if (process.env.CURSOR_API_KEY) {
-            args.unshift("--api-key", process.env.CURSOR_API_KEY);
-        }
 
         let stdout = "";
         let stderr = "";
