@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.10.0]
+
+### Added
+
+- **Native tool call rendering**: added native rendering for Cursor CLI tool calls
+- **Context usage estimates**: Pi messages now include estimated token usage so the UI can display approximate context consumption.
+
+### Fixed
+
+- Registered the provider API key as `"$CURSOR_API_KEY"` to avoid the deprecated legacy environment variable reference format.
+
+## [0.9.3]
+
+### Changed
+
+- Updated the cached Cursor models list.
+- Updated Pi package dependencies to the `earendil-works` organization.
+
 ## [0.9.2]
 
 ### Changed
