@@ -165,19 +165,9 @@ Ensure `~/.cursor/cli-config.json` allows the MCP tools. For example:
 I do not know if this would actually be an improvement, but it is an idea I saw in the
 [rchern/pi-claude-cli](https://github.com/rchern/pi-claude-cli/) extension: when the CLI outputs a tool call, you kill
 the CLI, execute the tool call natively with Pi, and then resume the CLI session while providing the tool call results.
-This would fix the rendering problems mentioned above and also allow the use of Pi native tools instead of Cursor's
-built-in ones. I do not know, though, how well that would work in practice.
+This would allow the use of Pi native tools instead of Cursor's built-in ones. I do not know, though, how well that would work in practice.
 
 # Limitations
-
-### Tool calls are not rendered like Pi tool calls
-
-Tool calls are rendered like normal text. They are indented to distinguish them visually, at least a little bit, from
-assistant output, but we cannot render them like standard Pi tool calls. Emitting tool call events from the stream
-provider, so they would be rendered with the standard Pi UI, would result in Pi trying to execute these calls, because
-that is what the agentic loop expects - a model should output a tool call at the end and then break, waiting for the tool
-execution result to be returned. But by the time we are rendering the tool call, it has already been executed by Cursor
-CLI, and we also do not really want Pi to try to execute it, as this would result in double execution.
 
 ### Context/token counts are estimates
 
