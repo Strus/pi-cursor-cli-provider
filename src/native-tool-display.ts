@@ -10,6 +10,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { type TSchema, Type } from "typebox";
+import { getCursorEditPath, prepareCursorEditArguments } from "./cursor-edit-args.js";
 
 const NATIVE_CURSOR_TOOL_NAMES = ["read", "bash", "edit", "grep", "ls", "cursor_edit", "cursor_write"] as const;
 type NativeCursorToolName = (typeof NATIVE_CURSOR_TOOL_NAMES)[number];
@@ -117,8 +118,7 @@ function getCursorReplayPath(
     args: Record<string, unknown> | undefined,
     details: CursorReplayToolDetails | undefined,
 ): string {
-    const argPath = args?.path;
-    return details?.path ?? (typeof argPath === "string" && argPath.trim() ? argPath : "unknown");
+    return details?.path ?? getCursorEditPath(args) ?? "unknown";
 }
 
 type CursorReplayRenderCall = NonNullable<ToolDefinition<typeof cursorReplayToolSchema, unknown>["renderCall"]>;
@@ -254,7 +254,16 @@ function createNativeCursorToolDefinition(
     if (toolName === "bash") return createBashToolDefinition(cwd) as ToolDefinition<TSchema, unknown, unknown>;
     if (toolName === "edit") {
         const definition = createEditToolDefinition(cwd) as ToolDefinition<TSchema, unknown, unknown>;
-        return { ...definition, parameters: cursorReplayToolSchema };
+        return {
+            ...definition,
+            parameters: cursorReplayToolSchema,
+            prepareArguments: prepareCursorEditArguments,
+            renderCall(args, theme) {
+                const path = getCursorEditPath(args as Record<string, unknown>) ?? "unknown";
+                const text = `${theme.fg("toolTitle", theme.bold("edit"))} ${theme.fg("accent", path)}`;
+                return new Text(text, 0, 0);
+            },
+        };
     }
     if (toolName === "grep") return createGrepToolDefinition(cwd) as ToolDefinition<TSchema, unknown, unknown>;
     if (toolName === "ls") return createLsToolDefinition(cwd) as ToolDefinition<TSchema, unknown, unknown>;

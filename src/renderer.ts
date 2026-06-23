@@ -1,3 +1,5 @@
+import { createPlaceholderEditArgs, getCursorEditPath, normalizeCursorEditArgsForPi } from "./cursor-edit-args.js";
+
 export interface CursorToolCallPayload {
     args: Record<string, unknown>;
     result?: Record<string, unknown> & {
@@ -206,7 +208,9 @@ function formatToolCallTitle(toolName: string, args: Record<string, unknown>): s
         case "write":
         case "delete":
         case "ls": {
-            const path = shortenDisplayPath(args.path);
+            const path = shortenDisplayPath(
+                toolName === "edit" || toolName === "write" ? (getCursorEditPath(args) ?? args.path) : args.path,
+            );
             const pathDisplay =
                 path == null ? invalidArgLabel() : path ? theme.fg("accent", path) : theme.fg("toolOutput", "...");
             return `${theme.fg("toolTitle", theme.bold(toolName))} ${pathDisplay}`;
@@ -508,6 +512,50 @@ function buildBashDisplay(payload: CursorToolCallPayload): CursorPiToolDisplay {
     };
 }
 
+function buildPiEditDetailsFromDiff(diffString: string | undefined): PiEditToolDetails | undefined {
+    if (!diffString) return undefined;
+    const displayDiff = unifiedDiffToPiDisplayDiff(diffString);
+    return {
+        diff: displayDiff.diff,
+        patch: diffString,
+        firstChangedLine: displayDiff.firstChangedLine,
+    };
+}
+
+function buildEditResultBody(
+    error: string | undefined,
+    path: string | undefined,
+    diffString: string | undefined,
+    linesAdded: number | undefined,
+    linesRemoved: number | undefined,
+): string {
+    const stats = [
+        linesAdded !== undefined ? `+${linesAdded}` : undefined,
+        linesRemoved !== undefined ? `-${linesRemoved}` : undefined,
+    ]
+        .filter(Boolean)
+        .join(" ");
+    const body = [stats, diffString].filter((part): part is string => Boolean(part)).join("\n\n");
+    return error ?? (body || `Edited ${path ?? "file"}`);
+}
+
+function getCursorEditResultContext(payload: CursorToolCallPayload): {
+    error: string | undefined;
+    diffString: string | undefined;
+    linesAdded: number | undefined;
+    linesRemoved: number | undefined;
+    path: string | undefined;
+} {
+    const success = getResultSuccess(payload);
+    return {
+        error: getResultError(payload),
+        diffString: getString(success?.diffString) ?? undefined,
+        linesAdded: typeof success?.linesAdded === "number" ? success.linesAdded : undefined,
+        linesRemoved: typeof success?.linesRemoved === "number" ? success.linesRemoved : undefined,
+        path: getCursorEditPath(payload.args) ?? undefined,
+    };
+}
+
 function buildReadDisplay(payload: CursorToolCallPayload): CursorPiToolDisplay {
     const success = getResultSuccess(payload);
     const error = getResultError(payload);
@@ -520,32 +568,36 @@ function buildReadDisplay(payload: CursorToolCallPayload): CursorPiToolDisplay {
     };
 }
 
+function buildCursorEditReplayDisplay(payload: CursorToolCallPayload): CursorPiToolDisplay {
+    const { error, diffString, linesAdded, linesRemoved, path } = getCursorEditResultContext(payload);
+    return {
+        toolName: "cursor_edit",
+        args: payload.args ?? {},
+        result: textToolResult(buildEditResultBody(error, path, diffString, linesAdded, linesRemoved), {
+            cursorToolName: "edit",
+            path,
+            linesAdded,
+            linesRemoved,
+            diffString,
+        }),
+        isError: Boolean(error),
+        omitStartRender: true,
+    };
+}
+
 function buildEditDisplay(payload: CursorToolCallPayload): CursorPiToolDisplay {
-    const success = getResultSuccess(payload);
-    const error = getResultError(payload);
-    const diffString = getString(success?.diffString);
-    const linesAdded = typeof success?.linesAdded === "number" ? success.linesAdded : undefined;
-    const linesRemoved = typeof success?.linesRemoved === "number" ? success.linesRemoved : undefined;
-    const stats = [
-        linesAdded !== undefined ? `+${linesAdded}` : undefined,
-        linesRemoved !== undefined ? `-${linesRemoved}` : undefined,
-    ]
-        .filter(Boolean)
-        .join(" ");
-    const body = [stats, diffString].filter((part): part is string => Boolean(part)).join("\n\n");
-    const path = getString(payload.args?.path);
-    const displayDiff = diffString ? unifiedDiffToPiDisplayDiff(diffString) : undefined;
-    const details: PiEditToolDetails | undefined = diffString
-        ? {
-              diff: displayDiff?.diff ?? diffString,
-              patch: diffString,
-              firstChangedLine: displayDiff?.firstChangedLine,
-          }
-        : undefined;
+    const { error, diffString, linesAdded, linesRemoved, path } = getCursorEditResultContext(payload);
+    const normalizedArgs =
+        normalizeCursorEditArgsForPi(payload.args) ?? (path && diffString ? createPlaceholderEditArgs(path) : null);
+    if (!normalizedArgs) return buildCursorEditReplayDisplay(payload);
+
     return {
         toolName: "edit",
         args: payload.args ?? {},
-        result: textToolResult(error ?? (body || `Edited ${path ?? "file"}`), details),
+        result: textToolResult(
+            buildEditResultBody(error, path ?? normalizedArgs.path, diffString, linesAdded, linesRemoved),
+            buildPiEditDetailsFromDiff(diffString),
+        ),
         isError: Boolean(error),
         omitStartRender: true,
     };
@@ -561,7 +613,7 @@ function buildWriteDisplay(payload: CursorToolCallPayload): CursorPiToolDisplay 
         fileSize !== undefined ? `File size: ${fileSize} bytes` : undefined,
         getString(success?.fileContentAfterWrite),
     ].filter((part): part is string => Boolean(part));
-    const path = getString(payload.args?.path);
+    const path = getCursorEditPath(payload.args) ?? undefined;
     return {
         toolName: "cursor_write",
         args: payload.args ?? {},
