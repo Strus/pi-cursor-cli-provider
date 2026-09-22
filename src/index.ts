@@ -26,6 +26,7 @@ import type {
     TextContent,
 } from "@earendil-works/pi-ai";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
+import { registerApiProvider } from "@earendil-works/pi-ai/compat";
 import { type ExtensionAPI, type ExtensionContext, estimateTokens } from "@earendil-works/pi-coding-agent";
 import {
     type CursorNativeLiveRun,
@@ -56,6 +57,7 @@ import {
 
 const CURSOR_SESSION_ENTRY_TYPE = "cursor-cli-session";
 const CURSOR_CLI_PLACEHOLDER_API_KEY = "cursor-cli";
+const CURSOR_CLI_API_PROVIDER_SOURCE = "pi-cursor-cli-provider";
 
 interface CursorSessionEntryData {
     cursorSessionId: string | null;
@@ -263,6 +265,14 @@ function syncCursorSessionState(ctx: ExtensionContext, state: CursorSessionState
         state.estimatedContextTokens = undefined;
     }
     return restored;
+}
+
+/** Drops the resumed Cursor chat so the next turn seeds Pi's compacted context. */
+function clearCursorSessionState(pi: ExtensionAPI, state: CursorSessionState): void {
+    state.current = undefined;
+    state.pending = undefined;
+    state.estimatedContextTokens = undefined;
+    persistCursorSessionId(pi, state, undefined);
 }
 
 // ---------------------------------------------------------------------------
@@ -590,6 +600,10 @@ export default async function (pi: ExtensionAPI) {
         persistCursorSessionId(pi, cursorSessionState, pending ?? undefined);
     });
 
+    pi.on("session_compact", async () => {
+        clearCursorSessionState(pi, cursorSessionState);
+    });
+
     let modelDefs = STATIC_MODELS;
     try {
         modelDefs = await runAgentModels(agentPath);
@@ -597,6 +611,17 @@ export default async function (pi: ExtensionAPI) {
         // assume CLI is not available if `agent models` fails - do not register provider
         return;
     }
+
+    const streamCursorCli = createStreamCursorCli(cursorSessionState);
+
+    registerApiProvider(
+        {
+            api: "cursor-cli" as Api,
+            stream: streamCursorCli,
+            streamSimple: streamCursorCli,
+        },
+        CURSOR_CLI_API_PROVIDER_SOURCE,
+    );
 
     pi.registerProvider("cursor", {
         baseUrl: "cli://cursor-agent",
@@ -608,6 +633,6 @@ export default async function (pi: ExtensionAPI) {
         oauth: createCursorCliOAuthCompatibility(),
         api: "cursor-cli" as Api,
         models: toProviderModels(modelDefs),
-        streamSimple: createStreamCursorCli(cursorSessionState),
+        streamSimple: streamCursorCli,
     });
 }

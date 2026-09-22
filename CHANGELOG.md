@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.2]
+
+### Fixed
+
+- Register the `cursor-cli` API with Pi's compat registry so `completeSimple` works for compaction and other auxiliary callers.
+- Clear the resumed Cursor CLI session after Pi compaction so the next turn sends Pi's compacted context instead of `--resume` with stale history, and reset usage estimates that caused repeat compaction.
+
 ## [0.10.1]
 
 ### Fixed
