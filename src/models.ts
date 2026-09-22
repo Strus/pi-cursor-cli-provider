@@ -1,5 +1,5 @@
-import { spawn } from "node:child_process";
 import type { ThinkingLevel, ThinkingLevelMap } from "@earendil-works/pi-ai";
+import { spawnCursorAgent } from "./agent-spawn.js";
 
 export interface CursorModelDef {
     id: string;
@@ -1430,10 +1430,7 @@ export function runAgentModels(agentPath: string): Promise<CursorModelDef[]> {
 
         let stdout = "";
         let stderr = "";
-        const child = spawn(agentPath, args, {
-            stdio: ["ignore", "pipe", "pipe"],
-            env: process.env,
-        });
+        const child = spawnCursorAgent(agentPath, args);
 
         const timeout = setTimeout(() => {
             child.kill("SIGTERM");

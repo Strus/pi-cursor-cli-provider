@@ -1,6 +1,6 @@
-import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import type { Context } from "@earendil-works/pi-ai";
+import { spawnCursorAgent } from "./agent-spawn.js";
 import {
     type CursorNativeToolDisplayItem,
     canRenderCursorToolNatively,
@@ -73,7 +73,7 @@ export interface CursorNativeLiveRun {
     waiters: Set<() => void>;
     done: boolean;
     errorMessage?: string;
-    child?: ReturnType<typeof spawn>;
+    child?: ReturnType<typeof spawnCursorAgent>;
     toolCounter: number;
 }
 
@@ -199,10 +199,7 @@ export function startCursorNativeRun(options: StartCursorNativeRunOptions): Curs
     };
     pendingCursorNativeRuns.set(run.id, run);
 
-    const child = spawn(options.agentPath, options.args, {
-        stdio: ["ignore", "pipe", "pipe"],
-        env: process.env,
-    });
+    const child = spawnCursorAgent(options.agentPath, options.args);
     run.child = child;
 
     const onAbort = () => {
