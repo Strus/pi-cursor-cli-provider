@@ -186,6 +186,15 @@ export function disposeCursorNativeRun(run: CursorNativeLiveRun): void {
     run.recordedToolDisplayIds.length = 0;
 }
 
+/**
+ * Process arguments cannot contain NUL, and spawn() throws if one does. Tool output from
+ * binary files can carry NULs into the prompt (for example when compaction serializes the
+ * whole conversation), so replace them with U+FFFD.
+ */
+export function stripNullBytes(arg: string): string {
+    return arg.includes("\0") ? arg.replaceAll("\0", "�") : arg;
+}
+
 export function startCursorNativeRun(options: StartCursorNativeRunOptions): CursorNativeLiveRun {
     const run: CursorNativeLiveRun = {
         id: createCursorNativeReplayId(),
@@ -199,7 +208,7 @@ export function startCursorNativeRun(options: StartCursorNativeRunOptions): Curs
     };
     pendingCursorNativeRuns.set(run.id, run);
 
-    const child = spawn(options.agentPath, options.args, {
+    const child = spawn(options.agentPath, options.args.map(stripNullBytes), {
         stdio: ["ignore", "pipe", "pipe"],
         env: process.env,
     });
