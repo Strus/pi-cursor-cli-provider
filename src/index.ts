@@ -34,6 +34,7 @@ import {
     getCursorNativeQueuedEventCount,
     getPendingCursorNativeReplayId,
     getPendingCursorNativeRun,
+    isCursorNativeReplayRunPending,
     peekCursorNativeQueuedEvent,
     startCursorNativeRun,
     takeCursorNativeQueuedEvent,
@@ -44,6 +45,7 @@ import {
     type CursorNativeToolDisplayItem,
     recordCursorNativeToolDisplay,
     registerCursorNativeToolDisplay,
+    setCursorReplayRunPendingCheck,
 } from "./native-tool-display.js";
 
 // ---------------------------------------------------------------------------
@@ -415,6 +417,25 @@ function createStreamCursorCli(cursorSessionState: CursorSessionState) {
                     });
                 };
 
+                // Drop tool calls that Cursor started but has not finished. Pi executes every
+                // toolCall in the final message, and one without a recorded result would run
+                // locally a second time. Cursor's completion re-emits it in a later message.
+                const dropUnfinishedToolCalls = () => {
+                    if (nativeToolContentIndexes.size === 0) return;
+                    const unfinished = new Set(nativeToolContentIndexes.keys());
+                    nativeToolContentIndexes.clear();
+                    output.content = output.content.filter(
+                        (block) => block.type !== "toolCall" || !unfinished.has(block.id),
+                    );
+                };
+
+                const hasUnfinishedToolCalls = (completed: CursorNativeToolDisplayItem[]) => {
+                    for (const id of nativeToolContentIndexes.keys()) {
+                        if (!completed.some((tool) => tool.id === id)) return true;
+                    }
+                    return false;
+                };
+
                 const emitNativeToolUseTurn = (run: CursorNativeLiveRun, tools: CursorNativeToolDisplayItem[]) => {
                     closeNativeThinkingBlock();
                     closeNativeTextBlock();
@@ -431,6 +452,7 @@ function createStreamCursorCli(cursorSessionState: CursorSessionState) {
                             run.recordedToolDisplayIds.push(tool.id);
                         }
                     }
+                    dropUnfinishedToolCalls();
                     output.stopReason = "toolUse";
                     setTiming();
                     updateEstimatedUsage(output, estimatedInputTokens, estimatedOutputTokens);
@@ -441,16 +463,34 @@ function createStreamCursorCli(cursorSessionState: CursorSessionState) {
 
                 const drainNativeRun = async (run: CursorNativeLiveRun) => {
                     stream.push({ type: "start", partial: output });
+                    const completedTools: CursorNativeToolDisplayItem[] = [];
                     while (true) {
                         await waitForCursorNativeRunProgress(run, options?.signal);
 
-                        const tools: CursorNativeToolDisplayItem[] = [];
-                        while (peekCursorNativeQueuedEvent(run)?.type === "tool") {
-                            const event = takeCursorNativeQueuedEvent(run);
-                            if (event?.type === "tool") tools.push(event.tool);
+                        // Parallel calls start together but complete one by one. Collect
+                        // completions (and further starts of the same batch) until every
+                        // started call has completed, then end the message once.
+                        while (true) {
+                            const next = peekCursorNativeQueuedEvent(run);
+                            if (next?.type === "tool") {
+                                takeCursorNativeQueuedEvent(run);
+                                completedTools.push(next.tool);
+                                continue;
+                            }
+                            if (next?.type === "tool-start" && completedTools.length > 0) {
+                                takeCursorNativeQueuedEvent(run);
+                                appendNativeToolStart(next.tool);
+                                continue;
+                            }
+                            break;
                         }
-                        if (tools.length > 0) {
-                            emitNativeToolUseTurn(run, tools);
+                        if (completedTools.length > 0) {
+                            const waitForMore =
+                                peekCursorNativeQueuedEvent(run) === undefined &&
+                                !run.done &&
+                                hasUnfinishedToolCalls(completedTools);
+                            if (waitForMore) continue;
+                            emitNativeToolUseTurn(run, completedTools);
                             return;
                         }
 
@@ -475,6 +515,7 @@ function createStreamCursorCli(cursorSessionState: CursorSessionState) {
                         if (event.type === "done") {
                             closeNativeThinkingBlock();
                             closeNativeTextBlock();
+                            dropUnfinishedToolCalls();
                             setTiming();
                             updateEstimatedUsage(output, estimatedInputTokens, estimatedOutputTokens);
                             cursorSessionState.estimatedContextTokens = output.usage.totalTokens;
@@ -559,6 +600,7 @@ function createStreamCursorCli(cursorSessionState: CursorSessionState) {
 
 export default async function (pi: ExtensionAPI) {
     registerCursorNativeToolDisplay(pi);
+    setCursorReplayRunPendingCheck(isCursorNativeReplayRunPending);
 
     const agentPath = getCursorAgentPath();
     const cursorSessionState: CursorSessionState = {

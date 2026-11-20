@@ -34,6 +34,8 @@ export interface CursorNativeToolDisplayItem {
     terminate?: boolean;
 }
 
+const CURSOR_REPLAY_TOOL_CALL_ID_PATTERN = /^cursor-cli-replay-\d+-\d+-tool-\d+$/;
+
 const registeredNativeToolNames = new Set<NativeCursorToolName>();
 const nativeToolResults = new Map<string, CursorNativeToolDisplayItem>();
 
@@ -72,6 +74,17 @@ export function deleteCursorNativeToolDisplay(id: string): void {
     nativeToolResults.delete(id);
 }
 
+let isCursorReplayRunPending: (toolCallId: string) => boolean = () => false;
+
+/** Lets the replay guard tell whether pi should keep draining the Cursor run after it. */
+export function setCursorReplayRunPendingCheck(check: (toolCallId: string) => boolean): void {
+    isCursorReplayRunPending = check;
+}
+
+export function isCursorReplayToolCallId(toolCallId: string): boolean {
+    return CURSOR_REPLAY_TOOL_CALL_ID_PATTERN.test(toolCallId);
+}
+
 function consumeCursorNativeToolDisplay(id: string): CursorNativeToolDisplayItem | undefined {
     const item = nativeToolResults.get(id);
     if (item) nativeToolResults.delete(id);
@@ -92,6 +105,21 @@ function wrapNativeCursorTool<TParams extends TSchema, TDetails, TState>(
                     details: cursorDisplay.result.details as TDetails,
                     isError: cursorDisplay.isError,
                     terminate: cursorDisplay.terminate ?? true,
+                };
+            }
+            // Cursor already ran every call it reports. A replay id without a recorded
+            // result must never run again here: bash calls can have side effects.
+            if (isCursorReplayToolCallId(toolCallId)) {
+                return {
+                    content: [
+                        {
+                            type: "text",
+                            text: "Cursor ran this tool call itself; its result was not available yet, so it was not run again.",
+                        },
+                    ],
+                    details: undefined as TDetails,
+                    isError: true,
+                    terminate: !isCursorReplayRunPending(toolCallId),
                 };
             }
             return getCurrentDefinition().execute(toolCallId, params, signal, onUpdate, ctx);

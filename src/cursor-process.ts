@@ -27,6 +27,8 @@ export interface CursorAssistantEvent {
 export interface CursorToolCallEvent {
     type: "tool_call";
     subtype: "started" | "completed";
+    /** Stable id shared by a call's started and completed events. */
+    call_id?: string;
     /** The outer object has exactly one key: the tool name (e.g. "shellToolCall"). */
     tool_call: Record<string, CursorToolCallPayload>;
 }
@@ -108,7 +110,14 @@ function createCursorNativeReplayId(): string {
     return `cursor-cli-replay-${Date.now()}-${cursorNativeReplayCounter}`;
 }
 
-function getCursorNativeToolStartKey(cliKey: string, payload: CursorToolCallPayload): string {
+function getCursorNativeToolStartKey(
+    event: CursorToolCallEvent,
+    cliKey: string,
+    payload: CursorToolCallPayload,
+): string {
+    // Prefer Cursor's call id: args can differ between started and completed, and two
+    // parallel calls can share the same args.
+    if (typeof event.call_id === "string" && event.call_id) return `call:${event.call_id}`;
     return `${cliKey}:${JSON.stringify(payload.args ?? {})}`;
 }
 
@@ -124,6 +133,12 @@ export function getPendingCursorNativeReplayId(context: Context): string | undef
         if (replayId && pendingCursorNativeRuns.has(replayId)) return replayId;
     }
     return undefined;
+}
+
+/** True while the Cursor run that produced this replay tool call id is still being drained. */
+export function isCursorNativeReplayRunPending(toolCallId: string): boolean {
+    const replayId = getCursorNativeReplayIdFromToolCallId(toolCallId);
+    return replayId !== undefined && pendingCursorNativeRuns.has(replayId);
 }
 
 export function getPendingCursorNativeRun(replayId: string): CursorNativeLiveRun | undefined {
@@ -271,7 +286,7 @@ export function startCursorNativeRun(options: StartCursorNativeRunOptions): Curs
             if (tce.subtype === "started") {
                 if (display.omitStartRender || !canRenderCursorToolNatively(display.toolName)) return;
                 const id = `${run.id}-tool-${++run.toolCounter}`;
-                const key = getCursorNativeToolStartKey(cliKey, payload);
+                const key = getCursorNativeToolStartKey(tce, cliKey, payload);
                 const ids = run.startedToolIds.get(key) ?? [];
                 ids.push(id);
                 run.startedToolIds.set(key, ids);
@@ -287,7 +302,7 @@ export function startCursorNativeRun(options: StartCursorNativeRunOptions): Curs
 
             if (tce.subtype !== "completed") return;
             if (canRenderCursorToolNatively(display.toolName)) {
-                const key = getCursorNativeToolStartKey(cliKey, payload);
+                const key = getCursorNativeToolStartKey(tce, cliKey, payload);
                 const ids = run.startedToolIds.get(key);
                 const startedId = ids?.shift();
                 if (ids && ids.length === 0) run.startedToolIds.delete(key);
